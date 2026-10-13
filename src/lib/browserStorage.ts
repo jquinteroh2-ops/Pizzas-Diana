@@ -35,7 +35,7 @@ import {
 } from '../../shared/dates.ts';
 import { ApiError } from './api';
 
-const STORAGE_KEY = 'pizza_diana_client_db_v3';
+const STORAGE_KEY = 'pizza_diana_client_db_v4';
 
 interface State {
   users: (User & { password?: string })[];
@@ -946,13 +946,30 @@ class BrowserDB {
     });
 
     // Evolution
-    const days = daysBetween(range.from, range.to);
-    const evolution = days.map((d) => ({
-      label: d,
-      from: d,
-      to: d,
-      units: confirmed.filter((s) => s.local_date === d).reduce((sum, s) => sum + s.total_units, 0),
-    }));
+    let evolution: { label: string; from: string; to: string; units: number }[] = [];
+    if (period === 'semana') {
+      const days = daysBetween(range.from, range.to);
+      evolution = days.map((d) => ({
+        label: d,
+        from: d,
+        to: d,
+        units: confirmed.filter((s) => s.local_date === d).reduce((sum, s) => sum + s.total_units, 0),
+      }));
+    } else if (period === 'mes') {
+      for (let start = range.from; start <= range.to; ) {
+        const end = weekEnd(start) < range.to ? weekEnd(start) : range.to;
+        const weekUnits = confirmed
+          .filter((s) => s.local_date >= start && s.local_date <= end)
+          .reduce((sum, s) => sum + s.total_units, 0);
+        evolution.push({
+          label: `${start}|${end}`,
+          from: start,
+          to: end,
+          units: weekUnits,
+        });
+        start = addDays(end, 1);
+      }
+    }
 
     return {
       period,
