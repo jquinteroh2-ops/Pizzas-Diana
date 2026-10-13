@@ -35,10 +35,10 @@ import {
 } from '../../shared/dates.ts';
 import { ApiError } from './api';
 
-const STORAGE_KEY = 'pizza_diana_client_db_v2';
+const STORAGE_KEY = 'pizza_diana_client_db_v3';
 
 interface State {
-  users: User[];
+  users: (User & { password?: string })[];
   currentUser: User | null;
   items: Item[];
   products: Product[];
@@ -52,28 +52,30 @@ function initialDemoState(): State {
   const now = new Date().toISOString();
   const today = localDate();
 
-  const admin: User = {
+  const admin: User & { password?: string } = {
     id: 1,
-    username: 'diana',
-    name: 'Diana Pérez',
+    username: 'jose',
+    name: 'Jose',
     role: 'admin',
     perms: ['entradas', 'reportes', 'historial_completo'],
     active: true,
     is_demo: true,
     created_at: now,
     updated_at: now,
+    password: 'American8',
   };
 
-  const empleado: User = {
+  const empleado: User & { password?: string } = {
     id: 2,
-    username: 'pedro',
-    name: 'Pedro Gómez',
+    username: 'rafa',
+    name: 'Rafa',
     role: 'empleado',
     perms: [],
     active: true,
     is_demo: true,
     created_at: now,
     updated_at: now,
+    password: 'Rafa1234',
   };
 
   const rawItems: { id: number; name: string; category: string; unit: Unit; qty: number; min: number }[] = [
@@ -405,9 +407,13 @@ class BrowserDB {
     return { user: u };
   }
 
-  login(body: { username: string }): { user: User } {
-    const u = this.state.users.find((x) => x.username.toLowerCase() === body.username.toLowerCase() && x.active);
+  login(body: { username: string; password?: string }): { user: User } {
+    const rawUser = (body.username || '').trim().toLowerCase();
+    const u = this.state.users.find((x) => x.username.toLowerCase() === rawUser && x.active);
     if (!u) throw new ApiError(401, 'Usuario o contraseña incorrectos.');
+    if (u.password && body.password && u.password !== body.password) {
+      throw new ApiError(401, 'Usuario o contraseña incorrectos.');
+    }
     this.state.currentUser = u;
     this.save();
     return { user: u };
