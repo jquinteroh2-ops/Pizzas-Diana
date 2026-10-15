@@ -14,6 +14,7 @@ import {
   FlaskConical,
   ChefHat,
   CalendarCheck,
+  Trophy,
   type LucideIcon,
 } from 'lucide-react';
 import { Logo } from './Logo';
@@ -32,6 +33,7 @@ interface NavItem {
 // (administrador → Inicio, caja → Registrar venta, cocina → Cocina).
 export const NAV: NavItem[] = [
   { name: 'inicio', label: 'Inicio', icon: LayoutDashboard, need: 'reports.view' },
+  { name: 'mas-vendidos', label: 'Más vendidos', icon: Trophy, need: 'reports.view' },
   { name: 'vender', label: 'Registrar venta', icon: ShoppingBag, need: 'sales.create' },
   { name: 'cocina', label: 'Cocina', icon: ChefHat, need: 'kitchen.report' },
   { name: 'plan', label: 'Plan de preparación', icon: CalendarCheck, need: 'kitchen.use' },

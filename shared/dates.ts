@@ -70,6 +70,17 @@ export function diffDays(from: string, to: string): number {
   return Math.round((toUtc(to).getTime() - toUtc(from).getTime()) / 86_400_000);
 }
 
+/**
+ * Si el período todavía va en curso (hoy está dentro), se compara contra los mismos
+ * días del período anterior: de lunes a miércoles contra lunes a miércoles, y no
+ * contra la semana completa, que siempre daría «bajó».
+ */
+export function comparablePrev(range: { from: string; to: string }, prev: { from: string; to: string }, today: string) {
+  if (today < range.from || today >= range.to) return prev;
+  const to = addDays(prev.from, diffDays(range.from, today));
+  return { from: prev.from, to: to < prev.to ? to : prev.to };
+}
+
 const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 const MONTHS_LONG = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 const DOW = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];

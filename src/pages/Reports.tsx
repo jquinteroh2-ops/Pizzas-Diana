@@ -22,10 +22,13 @@ function title(r: PeriodReport) {
   return monthName(r.range.from).replace(/^./, (c) => c.toUpperCase());
 }
 
-const prevLabel: Record<Period, string> = { dia: 'el día anterior', semana: 'la semana anterior', mes: 'el mes anterior' };
+const prevLabels: Record<Period, string> = { dia: 'el día anterior', semana: 'la semana anterior', mes: 'el mes anterior' };
+// Período en curso: se compara contra los mismos días del anterior.
+const prevLabelsPartial: Record<Period, string> = { dia: 'el día anterior', semana: 'los mismos días de la semana anterior', mes: 'los mismos días del mes anterior' };
 
-function Delta({ now, prev, period }: { now: number; prev: number; period: Period }) {
-  if (prev === 0) return <span className="text-xs text-ink-500">Sin ventas en {prevLabel[period]} para comparar</span>;
+function Delta({ now, prev, period, partial }: { now: number; prev: number; period: Period; partial: boolean }) {
+  const label = (partial ? prevLabelsPartial : prevLabels)[period];
+  if (prev === 0) return <span className="text-xs text-ink-500">Sin ventas en {label} para comparar</span>;
   const diff = now - prev;
   const pct = Math.round((diff / prev) * 100);
   const Icon = diff > 0 ? TrendingUp : diff < 0 ? TrendingDown : Minus;
@@ -34,7 +37,7 @@ function Delta({ now, prev, period }: { now: number; prev: number; period: Perio
       <Icon className="size-4" />
       {diff > 0 ? '+' : ''}
       {formatNumber(diff)} ({pct > 0 ? '+' : ''}
-      {pct} %) frente a {prevLabel[period]} ({formatNumber(prev)})
+      {pct} %) frente a {label} ({formatNumber(prev)})
     </span>
   );
 }
@@ -147,7 +150,7 @@ export default function Reports() {
               </p>
               <p className="mt-2 font-display text-5xl font-semibold tabular-nums">{formatNumber(r.total)}</p>
               <div className="mt-2">
-                <Delta now={r.total} prev={r.prevTotal} period={r.period} />
+                <Delta now={r.total} prev={r.prevTotal} period={r.period} partial={r.range.to > session.today} />
               </div>
             </div>
             <div className="card p-5">

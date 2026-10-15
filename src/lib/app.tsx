@@ -14,6 +14,7 @@ export function canDo(user: User | null, action: Action): boolean {
 
 export type RouteName =
   | 'inicio'
+  | 'mas-vendidos'
   | 'cocina'
   | 'plan'
   | 'inventario'

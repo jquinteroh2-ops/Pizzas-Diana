@@ -3,6 +3,7 @@ import type { DB } from '../db.ts';
 import { bad } from '../errors.ts';
 import {
   addDays,
+  comparablePrev,
   daysBetween,
   isYmd,
   localDate,
@@ -194,22 +195,23 @@ export function chartRange(kind: string, today = localDate()): Range {
  * Reporte diario, semanal (lunes a domingo) o mensual que contiene la fecha dada,
  * con su comparación contra el período anterior equivalente.
  */
-function periodRange(period: string, date: string): { range: Range; prev: Range } {
+function periodRange(period: string, date: string, today = localDate()): { range: Range; prev: Range } {
   if (!isYmd(date)) throw bad('Fecha no válida.');
   if (period === 'dia') return { range: { from: date, to: date }, prev: { from: addDays(date, -1), to: addDays(date, -1) } };
   if (period === 'semana') {
     const range = { from: weekStart(date), to: weekEnd(date) };
-    return { range, prev: { from: addDays(range.from, -7), to: addDays(range.to, -7) } };
+    return { range, prev: comparablePrev(range, { from: addDays(range.from, -7), to: addDays(range.to, -7) }, today) };
   }
   if (period === 'mes') {
     const pm = prevMonthStart(date);
-    return { range: { from: monthStart(date), to: monthEnd(date) }, prev: { from: pm, to: monthEnd(pm) } };
+    const range = { from: monthStart(date), to: monthEnd(date) };
+    return { range, prev: comparablePrev(range, { from: pm, to: monthEnd(pm) }, today) };
   }
   throw bad('Período no válido.');
 }
 
-export function periodReport(db: DB, period: string, date: string) {
-  const { range, prev } = periodRange(period, date);
+export function periodReport(db: DB, period: string, date: string, today = localDate()) {
+  const { range, prev } = periodRange(period, date, today);
 
   const total = unitsIn(db, range);
   const prevTotal = unitsIn(db, prev);

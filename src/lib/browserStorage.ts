@@ -37,6 +37,7 @@ import type {
 import { baseOf, compatible, formatQty, isUnit, stockStatus, toMilli, type Unit } from '../../shared/units.ts';
 import {
   addDays,
+  comparablePrev,
   daysBetween,
   isYmd,
   localDate,
@@ -1520,11 +1521,12 @@ class BrowserDB {
     if (period === 'dia') return { range: { from: date, to: date }, prev: { from: addDays(date, -1), to: addDays(date, -1) } };
     if (period === 'semana') {
       const range = { from: weekStart(date), to: weekEnd(date) };
-      return { range, prev: { from: addDays(range.from, -7), to: addDays(range.to, -7) } };
+      return { range, prev: comparablePrev(range, { from: addDays(range.from, -7), to: addDays(range.to, -7) }, localDate()) };
     }
     if (period === 'mes') {
       const pm = prevMonthStart(date);
-      return { range: { from: monthStart(date), to: monthEnd(date) }, prev: { from: pm, to: monthEnd(pm) } };
+      const range = { from: monthStart(date), to: monthEnd(date) };
+      return { range, prev: comparablePrev(range, { from: pm, to: monthEnd(pm) }, localDate()) };
     }
     throw bad('Período no válido.');
   }

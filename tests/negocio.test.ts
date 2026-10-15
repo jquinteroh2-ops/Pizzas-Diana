@@ -209,13 +209,14 @@ test('10. los reportes usan hora de Colombia, semana lunes-domingo y meses corre
   assert.equal(day.total, 2);
   assert.equal(day.prevTotal, 1);
 
-  const week = reports.periodReport(db, 'semana', '2026-10-15');
+  const DESPUES = '2026-12-01'; // «hoy» ya pasado: los períodos están completos
+  const week = reports.periodReport(db, 'semana', '2026-10-15', DESPUES);
   assert.deepEqual(week.range, { from: '2026-10-12', to: '2026-10-18' });
   assert.equal(week.total, 1 + 2 + 4);
   assert.equal(week.evolution.length, 7);
   assert.equal(week.evolution[0].units, 1);
 
-  const month = reports.periodReport(db, 'mes', '2026-10-05');
+  const month = reports.periodReport(db, 'mes', '2026-10-05', DESPUES);
   assert.deepEqual(month.range, { from: '2026-10-01', to: '2026-10-31' });
   assert.equal(month.total, 1 + 2 + 4 + 8 + 32);
   assert.equal(month.prevTotal, 16);
@@ -225,7 +226,13 @@ test('10. los reportes usan hora de Colombia, semana lunes-domingo y meses corre
   assert.equal(month.evolution.at(-1)?.to, '2026-10-31');
   assert.equal(month.evolution.reduce((s, w) => s + w.units, 0), month.total);
 
-  const prevWeek = reports.periodReport(db, 'semana', '2026-10-01');
+  // Período en curso: se compara contra los mismos días del anterior (1–5 de septiembre, no el mes entero).
+  const monthSoFar = reports.periodReport(db, 'mes', '2026-10-05', '2026-10-05');
+  assert.deepEqual(monthSoFar.prev, { from: '2026-09-01', to: '2026-09-05' });
+  assert.equal(monthSoFar.prevTotal, 0);
+  assert.deepEqual(reports.periodReport(db, 'semana', '2026-10-14', '2026-10-14').prev, { from: '2026-10-05', to: '2026-10-07' });
+
+  const prevWeek = reports.periodReport(db, 'semana', '2026-10-01', DESPUES);
   assert.deepEqual(prevWeek.range, { from: '2026-09-28', to: '2026-10-04' });
   assert.equal(prevWeek.total, 16 + 32);
 });

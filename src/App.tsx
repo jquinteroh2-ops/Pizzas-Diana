@@ -16,9 +16,11 @@ import UsersPage from './pages/Users';
 import SettingsPage from './pages/Settings';
 import Kitchen from './pages/Kitchen';
 import PrepPlan from './pages/PrepPlan';
+import TopSellers from './pages/TopSellers';
 
 const PAGES: Record<RouteName, () => React.JSX.Element> = {
   inicio: Dashboard,
+  'mas-vendidos': TopSellers,
   cocina: Kitchen,
   plan: PrepPlan,
   inventario: Inventory,

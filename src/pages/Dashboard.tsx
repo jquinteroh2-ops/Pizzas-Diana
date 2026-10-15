@@ -289,6 +289,9 @@ export default function Dashboard() {
             <>
               <p className="-mt-3 mb-3 text-xs text-ink-500">Unidades vendidas · {rangeText(charts.data.top.range)}</p>
               <TopProductsBars data={charts.data.top.data} />
+              <button className="btn-ghost btn-sm mt-2" onClick={() => navigate('mas-vendidos')}>
+                Ver la lista completa <ChevronRight className="size-4" />
+              </button>
             </>
           )}
         </Panel>
