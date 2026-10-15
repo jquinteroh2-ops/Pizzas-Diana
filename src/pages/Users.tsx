@@ -14,6 +14,17 @@ const PERMS: { value: ExtraPerm; label: string; hint: string; roles: Role[] }[] 
   { value: 'historial_completo', label: 'Ver historial de todos', hint: 'Si no, solo ve las ventas que registró.', roles: ['caja'] },
 ];
 
+// Al crear o cambiar la clave de OTRA persona, el navegador no debe ofrecer guardarla ni generarla:
+// la guardaría como si fuera la del administrador. Además, el generador de contraseñas del
+// navegador puede cerrar Brave en este formulario.
+const NO_PASSWORD_MANAGER = {
+  autoComplete: 'off',
+  'data-lpignore': 'true',
+  'data-1p-ignore': 'true',
+  'data-bwignore': 'true',
+  'data-form-type': 'other',
+} as const;
+
 const ROLE_INFO: Record<Role, { icon: LucideIcon; text: string; tone: string }> = {
   admin: { icon: ShieldCheck, text: 'Ve y controla todo: inventario, cocina, recetas, autorizaciones, estadísticas y usuarios.', tone: 'bg-brand-600 text-white' },
   caja: { icon: ShoppingBag, text: 'Registra las ventas y avisa faltantes y bajas. No cambia recetas ni existencias.', tone: 'bg-crust-300 text-ink-900' },
@@ -151,10 +162,10 @@ function UserForm({ user, onClose }: { user?: User; onClose: () => void }) {
         {!user && (
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Usuario" hint="Sin espacios ni tildes.">
-              <input className="input" value={username} onChange={(e) => setUsername(e.target.value.toLowerCase())} required minLength={3} maxLength={40} pattern="[a-z0-9._\-]+" autoCapitalize="none" />
+              <input className="input" value={username} onChange={(e) => setUsername(e.target.value.toLowerCase())} required minLength={3} maxLength={40} pattern="[a-z0-9._\-]+" autoCapitalize="none" {...NO_PASSWORD_MANAGER} />
             </Field>
             <Field label="Contraseña" hint="Mínimo 8 caracteres.">
-              <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} autoComplete="new-password" />
+              <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} {...NO_PASSWORD_MANAGER} />
             </Field>
           </div>
         )}
@@ -249,7 +260,7 @@ function PasswordForm({ user, onClose }: { user: User; onClose: () => void }) {
     >
       <form id="pwd-form" onSubmit={submit}>
         <Field label="Nueva contraseña" hint="Mínimo 8 caracteres.">
-          <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} autoComplete="new-password" />
+          <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} {...NO_PASSWORD_MANAGER} />
         </Field>
       </form>
     </Modal>

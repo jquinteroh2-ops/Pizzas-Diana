@@ -111,9 +111,16 @@ export function Modal({
   size?: 'sm' | 'md' | 'lg' | 'xl';
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  // onClose suele llegar como función nueva en cada render. Se guarda en una ref para que el
+  // efecto de abajo corra SOLO al abrir: si corriera en cada tecla, devolvería el cursor al
+  // primer campo y en el celular cerraría el teclado mientras se escribe.
+  const closeRef = useRef(onClose);
+  useEffect(() => {
+    closeRef.current = onClose;
+  });
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && closeRef.current();
     document.addEventListener('keydown', onKey);
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -122,7 +129,7 @@ export function Modal({
       document.removeEventListener('keydown', onKey);
       document.body.style.overflow = prev;
     };
-  }, [open, onClose]);
+  }, [open]);
   if (!open) return null;
   const w = { sm: 'sm:max-w-md', md: 'sm:max-w-lg', lg: 'sm:max-w-2xl', xl: 'sm:max-w-4xl' }[size];
   // Se dibuja directo en <body>: la página va dentro de un contenedor animado (transform) y,
