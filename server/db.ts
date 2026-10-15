@@ -16,6 +16,9 @@ const ITEM_COLUMNS = [
   'sort_order  INTEGER NOT NULL DEFAULT 0', // orden en la hoja de conteo
 ];
 
+// Apertura y cierre del día (o un conteo suelto). La migración 2 la agrega a bases anteriores.
+const COUNT_KIND_COLUMN = "kind TEXT NOT NULL DEFAULT 'libre' CHECK (kind IN ('apertura','cierre','libre'))";
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -218,6 +221,7 @@ CREATE INDEX IF NOT EXISTS idx_shortages_status ON shortages(status, item_id);
 CREATE TABLE IF NOT EXISTS counts (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   location    TEXT NOT NULL,
+  ${COUNT_KIND_COLUMN},
   status      TEXT NOT NULL DEFAULT 'pendiente' CHECK (status IN ('pendiente','aplicado','descartado')),
   note        TEXT NOT NULL DEFAULT '',
   counted_by  INTEGER NOT NULL REFERENCES users(id),
@@ -274,6 +278,12 @@ const MIGRATIONS: ((db: DB) => void)[] = [
              DROP TABLE movements_old;
              CREATE INDEX IF NOT EXISTS idx_mov_item ON movements(item_id, created_at);`);
     for (const col of ITEM_COLUMNS) db.exec(`ALTER TABLE items ADD COLUMN ${col}`);
+  },
+  // 2. Conteos de apertura y cierre del día. La tabla counts puede no existir aún (base de la versión 0).
+  (db) => {
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='counts'").get()) {
+      db.exec(`ALTER TABLE counts ADD COLUMN ${COUNT_KIND_COLUMN}`);
+    }
   },
 ];
 

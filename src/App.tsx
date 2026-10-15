@@ -45,7 +45,7 @@ function Routed() {
   const Page = PAGES[route.name];
   return (
     <Layout current={route.name}>
-      <div key={route.name} className="animate-fade-up">
+      <div key={route.name} className="animate-fade-in">
         <Page />
       </div>
     </Layout>

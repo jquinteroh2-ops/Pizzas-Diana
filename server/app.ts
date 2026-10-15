@@ -237,6 +237,9 @@ export function createApp(db: DB, opts: { secureCookies?: boolean; staticDir?: s
 
   // Conteos por ubicación.
   app.get('/api/counts/sheet', need('kitchen.use'), h((req) => counts.countSheet(db, qStr(req.query.location))));
+  app.get('/api/counts/day', need('kitchen.use'), h((req) => counts.dayCountStatus(db, qStr(req.query.date) ?? localDate())));
+  // Caja vs cocina: lo que descontaron las ventas frente a lo que se gastó según apertura y cierre.
+  app.get('/api/reconciliation', need('kitchen.manage'), h((req) => counts.reconciliation(db, qStr(req.query.date) ?? localDate())));
   app.get('/api/counts', need('kitchen.use'), h((req) => counts.listCounts(db, req.user!, { status: qStr(req.query.status), limit: qNum(req.query.limit) })));
   app.get('/api/counts/:id', need('kitchen.use'), h((req) => counts.getCount(db, req.user!, id(req))));
   app.post('/api/counts', need('kitchen.use'), h((req, res) => {

@@ -322,7 +322,7 @@ test('21. migración: una base de la versión anterior conserva sus datos y «em
     old.close();
 
     const db = openDb(path);
-    assert.equal((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version, 1);
+    assert.equal((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version, 2);
     const rafa = users.getUser(db, 2);
     assert.equal(rafa.role, 'caja');
     assert.deepEqual(rafa.perms, ['entradas']);
@@ -342,4 +342,52 @@ test('21. migración: una base de la versión anterior conserva sus datos y «em
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('23. caja vs cocina: compara lo que descontaron las ventas con lo que se gastó entre apertura y cierre', () => {
+  const { db, admin, cook, cashier } = setup();
+  const queso = inv.createItem(db, admin, { name: 'Queso', category: 'Lácteos', unit: 'kg', qty: 5, min: 1, location: 'Nevera Coca-Cola' });
+  const tomate = inv.createItem(db, admin, { name: 'Tomate', category: 'Verduras y frutas', unit: 'kg', qty: 2, min: 0.5, location: 'Nevera Coca-Cola' });
+  const pizza = prod.createProduct(db, { name: 'Pizza', category: 'Pizzas', type: 'preparado', recipe: [{ item_id: queso.id, qty: 200, unit: 'g' }] });
+  const day = '2026-10-14';
+  const at = (h: number, m = 0) => new Date(`${day}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00-05:00`).toISOString();
+
+  // Apertura: hay lo que dice el sistema.
+  const open = counts.submitCount(
+    db,
+    cook,
+    { location: 'Nevera Coca-Cola', kind: 'apertura', lines: [{ item_id: queso.id, qty: 5, unit: 'kg' }, { item_id: tomate.id, qty: 2, unit: 'kg' }] },
+    { at: at(8) },
+  );
+  assert.equal(open.kind, 'apertura');
+  counts.reviewCount(db, admin, open.id, { decision: 'aplicar' }, { at: at(8, 5) });
+  // Durante el día: llega 1 kg de queso, se venden 10 pizzas (2 kg de queso según receta), se bota 100 g de tomate.
+  inv.registerEntry(db, admin, queso.id, { qty: 1, unit: 'kg', reason: 'Compra' }, { at: at(10) });
+  sales.registerSale(db, cashier, { requestId: 'recon-0001', items: [{ productId: pizza.id, qty: 10 }] }, { at: at(13) });
+  const one = sales.registerSale(db, cashier, { requestId: 'recon-0002', items: [{ productId: pizza.id, qty: 1 }] }, { at: at(14) });
+  sales.annulSale(db, admin, one.sale.id, { reason: 'Error de caja' }, { at: at(14, 5) });
+  const w = wastes.reportWaste(db, cook, { item_id: tomate.id, qty: 100, unit: 'g', reason: 'danado' }, { at: at(15) });
+  wastes.reviewWaste(db, admin, w.id, { decision: 'aprobar' }, { at: at(15, 5) });
+  // Cierre: quedan 3,6 kg de queso (se gastaron 2,4 kg: 400 g más de lo que dicen las recetas) y 1,9 kg de tomate.
+  counts.submitCount(
+    db,
+    cook,
+    { location: 'Nevera Coca-Cola', kind: 'cierre', lines: [{ item_id: queso.id, qty: 3.6, unit: 'kg' }, { item_id: tomate.id, qty: 1.9, unit: 'kg' }] },
+    { at: at(23) },
+  );
+
+  const r = counts.reconciliation(db, day);
+  assert.equal(r.status[0].apertura?.id, open.id);
+  const q = r.lines.find((l) => l.item_id === queso.id)!;
+  assert.equal(q.open_m, 5_000_000);
+  assert.equal(q.entries_m, 1_000_000);
+  assert.equal(q.sales_m, 2_000_000); // la venta anulada no cuenta
+  assert.equal(q.real_m, 2_400_000);
+  assert.equal(q.diff_m, 400_000);
+  const t = r.lines.find((l) => l.item_id === tomate.id)!;
+  assert.equal(t.waste_m, 100_000);
+  assert.equal(t.real_m, 0); // la baja explica todo lo que falta
+  assert.equal(t.diff_m, 0);
+  // Sin cierre no hay comparación.
+  assert.equal(counts.reconciliation(db, '2026-10-13').lines.length, 0);
 });

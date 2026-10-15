@@ -34,7 +34,7 @@ Abre tu navegador en: **`http://localhost:3001`**
 
 ## 🧪 Pruebas y Validación
 
-El proyecto incluye 24 pruebas automatizadas con `node:test` que verifican cada regla de negocio, seguridad y persistencia:
+El proyecto incluye 25 pruebas automatizadas con `node:test` que verifican cada regla de negocio, seguridad y persistencia:
 ```bash
 # Ejecutar suite de pruebas
 npm test
@@ -110,7 +110,8 @@ npm run lint
    - **Preparar**: transformaciones con merma (cebolla → cebolla picada o caramelizada) y recetas por lote (masa de pizza escalada según la harina). Calcula rendimiento contra el estándar y alerta si rinde bajo.
    - **Falta algo**: faltantes reportados por cualquiera, sin duplicados; se juntan con lo que está bajo el mínimo en la **lista de compras** (copiar o enviar por WhatsApp). Al registrar la entrada, el faltante se cierra solo.
    - **Dar de baja**: con motivo y foto; solo descuenta cuando el administrador la aprueba.
-   - **Contar nevera**: conteo a ciegas por ubicación (congelador, nevera negra, nevera Coca-Cola, bodega), en paquetes + sueltos. El administrador revisa y aplica solo la diferencia.
+   - **Contar nevera**: conteo a ciegas por ubicación (congelador, nevera negra, nevera Coca-Cola, bodega), en paquetes + sueltos, de **apertura** (al abrir), **cierre** (al cerrar) o suelto. El administrador revisa y aplica solo la diferencia.
+   - **Caja vs cocina**: por producto y por día, lo que descontaron las ventas según las recetas frente a lo que de verdad gastó la cocina (apertura + entradas + preparado − usado para preparar − bajas − cierre), con la diferencia y alerta desde el 5 %.
    - **Plan de preparación** semanal (cada día algo distinto), con «copiar semana anterior».
    - Reporte de cocina: rendimiento, bajas por motivo, entradas de mercancía y diferencias de conteo.
    - **Cargar catálogo Pizza Diana** (Configuración): productos de las hojas por nevera, 8 preparaciones y el menú con recetas sugeridas (revisar cantidades con el dueño).

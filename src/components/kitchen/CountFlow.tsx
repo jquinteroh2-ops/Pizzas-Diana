@@ -5,11 +5,12 @@ import { useMemo, useState, type FormEvent } from 'react';
 import { CheckCircle2, Loader2, ClipboardList } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useApi, useApp } from '../../lib/app';
-import type { Count, CountSheet, CountSheetLine, Item } from '../../lib/types';
+import type { Count, CountSheet, CountSheetLine, DayCountStatus, Item } from '../../lib/types';
 import { useToast } from '../toast';
 import { Modal, Loading, ErrorBox, EmptyState, Segmented, Field, cx } from '../ui';
 import { formatQty, niceUnit, toMilli, UNIT_SHORT, type BaseUnit, type Unit } from '../../../shared/units.ts';
-import { LOCATIONS, formatPacks, type Location } from '../../../shared/kitchen.ts';
+import { COUNT_KINDS, COUNT_KIND_LABELS, LOCATIONS, formatPacks, type CountKind, type Location } from '../../../shared/kitchen.ts';
+import { formatTime } from '../../../shared/dates.ts';
 import { LOCATION_ICONS, parseQty, validQty } from './helpers';
 
 type Scale = 'pequena' | 'grande';
@@ -20,8 +21,11 @@ function looseUnit(base: BaseUnit, scale: Scale): Unit {
   return scale === 'pequena' ? 'ml' : 'l';
 }
 
-export function CountFlow({ onClose }: { onClose: () => void }) {
+export function CountFlow({ onClose, initialKind }: { onClose: () => void; initialKind?: CountKind }) {
   const items = useApi<Item[]>('/kitchen/items');
+  const day = useApi<DayCountStatus[]>('/counts/day');
+  // Antes de las 3 p. m. lo normal es la apertura; después, el cierre.
+  const [kind, setKind] = useState<CountKind>(() => initialKind ?? (new Date().getHours() < 15 ? 'apertura' : 'cierre'));
   const [location, setLocation] = useState<Location | null>(null);
   const [sent, setSent] = useState<Count | null>(null);
 
@@ -30,9 +34,15 @@ export function CountFlow({ onClose }: { onClose: () => void }) {
     for (const i of items.data ?? []) m.set(i.location, (m.get(i.location) ?? 0) + 1);
     return m;
   }, [items.data]);
+  const doneFor = (l: Location) => (kind === 'libre' ? null : (day.data?.find((d) => d.location === l)?.[kind] ?? null));
 
   return (
-    <Modal open onClose={onClose} title={sent ? 'Conteo enviado' : location ? `Contar: ${location}` : '¿Qué vas a contar?'} size="lg">
+    <Modal
+      open
+      onClose={onClose}
+      title={sent ? 'Conteo enviado' : location ? `${COUNT_KIND_LABELS[kind]}: ${location}` : '¿Qué vas a contar?'}
+      size="lg"
+    >
       {sent ? (
         <SentCount c={sent} onClose={onClose} />
       ) : !location ? (
@@ -41,36 +51,65 @@ export function CountFlow({ onClose }: { onClose: () => void }) {
         ) : !items.data ? (
           <Loading />
         ) : (
-          <div className="grid grid-cols-2 gap-3">
-            {LOCATIONS.filter((l) => counts.get(l)).map((l) => {
-              const Icon = LOCATION_ICONS[l];
-              return (
+          <div className="space-y-5">
+            <div className="grid grid-cols-3 gap-2">
+              {COUNT_KINDS.map((k) => (
                 <button
-                  key={l}
+                  key={k}
                   type="button"
-                  onClick={() => setLocation(l)}
-                  className="flex min-h-28 flex-col justify-between rounded-3xl border border-cream-300 bg-white p-4 text-left transition-all hover:border-brand-300 hover:shadow-card active:scale-[0.98]"
+                  onClick={() => setKind(k)}
+                  className={cx(
+                    'rounded-2xl border p-3 text-left transition-all',
+                    kind === k ? 'border-ink-900 bg-ink-900 text-white' : 'border-cream-300 bg-white text-ink-700 hover:border-ink-400',
+                  )}
                 >
-                  <span className="grid size-10 place-items-center rounded-2xl bg-sky-50 text-sky-700">
-                    <Icon className="size-5" />
-                  </span>
-                  <span>
-                    <span className="block font-display text-lg font-semibold text-ink-900">{l}</span>
-                    <span className="text-xs text-ink-500">{counts.get(l)} productos</span>
+                  <span className="block text-sm font-semibold">{COUNT_KIND_LABELS[k]}</span>
+                  <span className={cx('block text-[11px]', kind === k ? 'text-white/70' : 'text-ink-500')}>
+                    {k === 'apertura' ? 'Al empezar el día' : k === 'cierre' ? 'Al terminar el día' : 'En cualquier momento'}
                   </span>
                 </button>
-              );
-            })}
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {LOCATIONS.filter((l) => counts.get(l)).map((l) => {
+                const Icon = LOCATION_ICONS[l];
+                const done = doneFor(l);
+                return (
+                  <button
+                    key={l}
+                    type="button"
+                    onClick={() => setLocation(l)}
+                    className={cx(
+                      'flex min-h-28 flex-col justify-between rounded-3xl border p-4 text-left transition-all hover:shadow-card active:scale-[0.98]',
+                      done ? 'border-emerald-300 bg-emerald-50/60' : 'border-cream-300 bg-white hover:border-brand-300',
+                    )}
+                  >
+                    <span className="flex items-center justify-between">
+                      <span className="grid size-10 place-items-center rounded-2xl bg-sky-50 text-sky-700">
+                        <Icon className="size-5" />
+                      </span>
+                      {done && <CheckCircle2 className="size-6 text-emerald-600" />}
+                    </span>
+                    <span>
+                      <span className="block font-display text-lg font-semibold text-ink-900">{l}</span>
+                      <span className="text-xs text-ink-500">
+                        {done ? `Ya contada por ${done.counted_by_name} a las ${formatTime(done.counted_at)}` : `${counts.get(l)} productos`}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )
       ) : (
-        <CountSheetForm location={location} onBack={() => setLocation(null)} onSent={setSent} />
+        <CountSheetForm location={location} kind={kind} onBack={() => setLocation(null)} onSent={setSent} />
       )}
     </Modal>
   );
 }
 
-function CountSheetForm({ location, onBack, onSent }: { location: Location; onBack: () => void; onSent: (c: Count) => void }) {
+function CountSheetForm({ location, kind, onBack, onSent }: { location: Location; kind: CountKind; onBack: () => void; onSent: (c: Count) => void }) {
   const { bump, can } = useApp();
   const toast = useToast();
   const sheet = useApi<CountSheet>(`/counts/sheet?location=${encodeURIComponent(location)}`, [location]);
@@ -101,6 +140,7 @@ function CountSheetForm({ location, onBack, onSent }: { location: Location; onBa
     try {
       const body = {
         location,
+        kind,
         note,
         lines: lines
           .map((l) => ({ l, m: countedM(l) }))
@@ -220,7 +260,7 @@ function SentCount({ c, onClose }: { c: Count; onClose: () => void }) {
         <CheckCircle2 className="size-9" />
       </span>
       <p className="mt-4 font-display text-xl font-semibold text-ink-900">
-        {c.lines_count} productos contados en {c.location}
+        {COUNT_KIND_LABELS[c.kind]}: {c.lines_count} productos contados en {c.location}
       </p>
       <p className="mt-1 max-w-sm text-sm text-ink-500">
         {c.status === 'aplicado'

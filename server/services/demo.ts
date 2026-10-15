@@ -192,6 +192,22 @@ export function loadDemo(db: DB, admin: User, now = new Date()) {
 
     let seq = 0;
     const saleIds: string[] = [];
+
+    // Apertura y cierre de la última semana. Al cerrar, algunos productos se gastaron un poco
+    // más de lo que dicen las recetas (porciones grandes, picoteo): así se ve en «Caja vs cocina».
+    const EXTRA_USE: Record<string, number> = { queso_mozzarella: 0.06, tocineta: 0.1, papas: 0.08, pepperoni: 0.07 };
+    const soldSince = db.prepare("SELECT COALESCE(-SUM(delta_m), 0) n FROM movements WHERE item_id = ? AND type = 'venta' AND created_at >= ?");
+    const countAll = (kind: 'apertura' | 'cierre', at: string, openedAt?: string) => {
+      for (const location of new Set(CATALOG_ITEMS.map((c) => c.location))) {
+        const lines = CATALOG_ITEMS.filter((c) => c.location === location).map((c) => {
+          const it = getItem(db, itemId[c.key]);
+          const extra = kind === 'cierre' && openedAt ? Math.round((soldSince.get(it.id, openedAt) as { n: number }).n * (EXTRA_USE[c.key] ?? 0)) : 0;
+          return { item_id: it.id, qty: Math.max(0, it.qty_m - extra) / 1000, unit: it.base_unit };
+        });
+        const c = submitCount(db, carlos, { location, kind, lines }, { at, isDemo: true });
+        reviewCount(db, admin, c.id, { decision: 'aplicar' }, { at: new Date(new Date(at).getTime() + 15 * 60_000).toISOString() });
+      }
+    };
     for (let i = 0; i <= DAYS; i++) {
       const day = addDays(start, i);
       const dow = new Date(day + 'T00:00:00Z').getUTCDay();
@@ -208,6 +224,9 @@ export function loadDemo(db: DB, admin: User, now = new Date()) {
           }
         }
       }
+
+      const withCounts = i >= DAYS - 7;
+      if (withCounts && new Date(bogota(day, 8, 30)) <= now) countAll('apertura', bogota(day, 8, 30));
 
       // Plan del día (se guarda para la semana pasada y la actual) y lo que prepara la cocina en la mañana.
       const plan = DEMO_WEEK_PLAN[dow];
@@ -267,10 +286,13 @@ export function loadDemo(db: DB, admin: User, now = new Date()) {
           reviewWaste(db, admin, w.id, { decision: 'aprobar', note: 'Revisada con la foto' }, { at: bogota(day, 22, 0) });
         }
       }
+
+      // Cierre del día, después de las bajas de la noche.
+      if (withCounts && !isToday) countAll('cierre', bogota(day, 23, 15), bogota(day, 8, 30));
     }
 
     // Un par de ventas anuladas para que se vea el flujo de auditoría.
-    for (const idx of [Math.floor(saleIds.length * 0.4), Math.floor(saleIds.length * 0.8)]) {
+    for (const idx of [Math.floor(saleIds.length * 0.4), Math.floor(saleIds.length * 0.6)]) {
       const id = saleIds[idx];
       if (!id) continue;
       const created = (db.prepare('SELECT created_at FROM sales WHERE id = ?').get(id) as { created_at: string }).created_at;

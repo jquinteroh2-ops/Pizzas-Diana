@@ -22,6 +22,7 @@ import {
   BookOpen,
   History as HistoryIcon,
   Undo2,
+  Scale,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { navigate, useApi, useApp, useHashRoute } from '../lib/app';
@@ -32,11 +33,12 @@ import { WastePhoto } from '../components/kitchen/ReportFlows';
 import { efficiencyTone, LOCATION_ICONS } from '../components/kitchen/helpers';
 import { FlowHost, type Flow } from '../components/kitchen/FlowHost';
 import { EntryForm } from './Inventory';
+import ReconTab from './ReconTab';
 import { baseOf, formatNumber, formatQty, fromMilli, niceUnit, toMilli, unitsFor, UNIT_SHORT, type Unit } from '../../shared/units.ts';
 import { addDays, formatDateTime, formatTime, localDate, shortDate, shortDateDow, weekEnd, weekStart } from '../../shared/dates.ts';
-import { SHORTAGE_LEVEL_LABELS, WASTE_REASON_LABELS, type PrepMode } from '../../shared/kitchen.ts';
+import { COUNT_KIND_LABELS, SHORTAGE_LEVEL_LABELS, WASTE_REASON_LABELS, type PrepMode } from '../../shared/kitchen.ts';
 
-type Tab = 'pendientes' | 'compras' | 'preparaciones' | 'registro';
+type Tab = 'pendientes' | 'caja-cocina' | 'compras' | 'preparaciones' | 'registro';
 
 export default function KitchenAdmin() {
   const route = useHashRoute();
@@ -49,6 +51,7 @@ export default function KitchenAdmin() {
 
   const tabs: { value: Tab; label: string; icon: typeof Inbox; badge?: number }[] = [
     { value: 'pendientes', label: 'Por autorizar', icon: Inbox, badge: pendingCount },
+    { value: 'caja-cocina', label: 'Caja vs cocina', icon: Scale },
     { value: 'compras', label: 'Lista de compras', icon: ShoppingCart, badge: shop.data?.length },
     { value: 'preparaciones', label: 'Preparaciones', icon: BookOpen },
     { value: 'registro', label: 'Lo que se preparó', icon: HistoryIcon },
@@ -100,6 +103,7 @@ export default function KitchenAdmin() {
       </div>
 
       {tab === 'pendientes' && <PendingTab wastes={pw} counts={pc} />}
+      {tab === 'caja-cocina' && <ReconTab />}
       {tab === 'compras' && <ShoppingTab list={shop} />}
       {tab === 'preparaciones' && <PreparationsTab />}
       {tab === 'registro' && <LogTab />}
@@ -160,7 +164,7 @@ function PendingTab({ wastes, counts }: { wastes: Loaded<Waste[]>; counts: Loade
                     </span>
                     <div className="min-w-0 flex-1">
                       <p className="font-semibold text-ink-900">
-                        {c.location} {c.is_demo ? <DemoTag /> : null}
+                        {COUNT_KIND_LABELS[c.kind]} · {c.location} {c.is_demo ? <DemoTag /> : null}
                       </p>
                       <p className="text-xs text-ink-500">
                         {c.counted_by_name} · {formatDateTime(c.counted_at)}
@@ -319,7 +323,7 @@ function CountReview({ id, onClose }: { id: number; onClose: () => void }) {
       open
       onClose={onClose}
       size="lg"
-      title={c.data ? `Conteo de ${c.data.location}` : 'Conteo'}
+      title={c.data ? `${COUNT_KIND_LABELS[c.data.kind]} · ${c.data.location}` : 'Conteo'}
       subtitle={c.data ? `${c.data.counted_by_name} · ${formatDateTime(c.data.counted_at)}${c.data.note ? ` · ${c.data.note}` : ''}` : undefined}
       footer={
         c.data?.status === 'pendiente' && (

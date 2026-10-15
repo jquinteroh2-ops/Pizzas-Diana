@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { CheckCircle2, AlertTriangle, XCircle, Loader2, X, FlaskConical, type LucideIcon } from 'lucide-react';
 import type { StockStatus } from '../../shared/units.ts';
 
@@ -124,7 +125,9 @@ export function Modal({
   }, [open, onClose]);
   if (!open) return null;
   const w = { sm: 'sm:max-w-md', md: 'sm:max-w-lg', lg: 'sm:max-w-2xl', xl: 'sm:max-w-4xl' }[size];
-  return (
+  // Se dibuja directo en <body>: la página va dentro de un contenedor animado (transform) y,
+  // si el modal quedara adentro, «fixed» se mediría contra ese contenedor y no contra la pantalla.
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label={title}>
       <div className="absolute inset-0 animate-fade-up bg-ink-900/40 backdrop-blur-[2px]" onClick={onClose} />
       <div ref={ref} className={cx('relative flex max-h-[92dvh] w-full animate-pop flex-col rounded-t-3xl bg-white shadow-pop sm:rounded-3xl', w)}>
@@ -140,7 +143,8 @@ export function Modal({
         <div className="flex-1 overflow-y-auto px-6 py-5">{children}</div>
         {footer && <div className="flex flex-col-reverse gap-2 border-t border-cream-200 px-6 py-4 sm:flex-row sm:justify-end">{footer}</div>}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

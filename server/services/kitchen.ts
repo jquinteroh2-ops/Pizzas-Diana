@@ -8,7 +8,7 @@ import { createPreparation, listProductions } from './preparations.ts';
 import { createProduct } from './products.ts';
 import { listWastes } from './wastes.ts';
 import { listShortages } from './shortages.ts';
-import { listCounts } from './counts.ts';
+import { dayCountStatus, listCounts } from './counts.ts';
 import { tasksBetween } from './plan.ts';
 import type { User } from './users.ts';
 
@@ -22,6 +22,7 @@ export function kitchenToday(db: DB, user: User) {
     wastes: listWastes(db, user, { from: today, to: today, limit: 50 }).filter((w) => w.reported_by === user.id),
     shortages: listShortages(db, { scope: 'open' }),
     counts: listCounts(db, user, { limit: 10 }).filter((c) => c.local_date === today && c.counted_by === user.id),
+    dayCounts: dayCountStatus(db, today),
   };
 }
 

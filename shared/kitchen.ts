@@ -46,6 +46,20 @@ export const SHORTAGE_STATUS_LABELS: Record<ShortageStatus, string> = {
 export const COUNT_STATUSES = ['pendiente', 'aplicado', 'descartado'] as const;
 export type CountStatus = (typeof COUNT_STATUSES)[number];
 
+/** Apertura (al abrir), cierre (al cerrar) o un conteo suelto en cualquier momento. */
+export const COUNT_KINDS = ['apertura', 'cierre', 'libre'] as const;
+export type CountKind = (typeof COUNT_KINDS)[number];
+export const COUNT_KIND_LABELS: Record<CountKind, string> = { apertura: 'Apertura', cierre: 'Cierre', libre: 'Conteo suelto' };
+
+/**
+ * Consumo real de un producto entre la apertura y el cierre, como en la hoja de papel:
+ * lo que había al abrir + lo que entró + lo que se preparó − lo que se usó para preparar
+ * − las bajas − lo que quedó al cerrar. Las ventas NO entran aquí: son el otro dato a comparar.
+ */
+export function realConsumption(p: { openM: number; closeM: number; entriesM: number; producedM: number; usedForPrepM: number; wasteM: number }) {
+  return p.openM + p.entriesM + p.producedM - p.usedForPrepM - p.wasteM - p.closeM;
+}
+
 /** Por debajo de este % del rendimiento estándar, la preparación se marca para revisar. */
 export const LOW_EFFICIENCY_PCT = 90;
 

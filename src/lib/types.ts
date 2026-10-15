@@ -1,6 +1,7 @@
 import type { BaseUnit, StockStatus, Unit } from '../../shared/units.ts';
 import type { Role, ExtraPerm } from '../../shared/permissions.ts';
 import type {
+  CountKind,
   CountStatus,
   ItemKind,
   Location,
@@ -371,6 +372,7 @@ export interface CountLine {
 export interface Count {
   id: number;
   location: Location;
+  kind: CountKind;
   status: CountStatus;
   note: string;
   counted_by: number;
@@ -413,6 +415,37 @@ export interface KitchenToday {
   wastes: Waste[];
   shortages: Shortage[];
   counts: Count[];
+  dayCounts: DayCountStatus[];
+}
+
+/** Si ya se contó cada ubicación al abrir y al cerrar. */
+export interface DayCountStatus {
+  location: Location;
+  apertura: { id: number; counted_by_name: string; counted_at: string; status: CountStatus } | null;
+  cierre: { id: number; counted_by_name: string; counted_at: string; status: CountStatus } | null;
+}
+
+export interface ReconciliationLine {
+  item_id: number;
+  name: string;
+  location: Location;
+  unit: Unit;
+  base_unit: BaseUnit;
+  open_m: number;
+  entries_m: number;
+  produced_m: number;
+  used_m: number;
+  waste_m: number;
+  close_m: number;
+  real_m: number;
+  sales_m: number;
+  diff_m: number;
+}
+
+export interface Reconciliation {
+  date: string;
+  status: DayCountStatus[];
+  lines: ReconciliationLine[];
 }
 
 export interface KitchenReport {

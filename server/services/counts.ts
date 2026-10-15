@@ -5,8 +5,8 @@
 import { type DB, nowIso, tx, isDemoMode } from '../db.ts';
 import { bad, conflict, notFound, oneOf, optStr, num } from '../errors.ts';
 import { compatible, isUnit, toMilli, type BaseUnit, type Unit } from '../../shared/units.ts';
-import { COUNT_STATUSES, LOCATIONS, type CountStatus, type Location } from '../../shared/kitchen.ts';
-import { localDate } from '../../shared/dates.ts';
+import { COUNT_KINDS, COUNT_STATUSES, LOCATIONS, realConsumption, type CountKind, type CountStatus, type Location } from '../../shared/kitchen.ts';
+import { isYmd, localDate } from '../../shared/dates.ts';
 import { applyMovement } from './inventory.ts';
 import { can, type User } from './users.ts';
 
@@ -46,6 +46,7 @@ export interface CountLineView {
 export interface CountView {
   id: number;
   location: Location;
+  kind: CountKind;
   status: CountStatus;
   note: string;
   counted_by: number;
@@ -60,7 +61,7 @@ export interface CountView {
   lines?: CountLineView[];
 }
 
-const SELECT = `SELECT c.id, c.location, c.status, c.note, c.counted_by, cu.name counted_by_name, c.counted_at, c.local_date,
+const SELECT = `SELECT c.id, c.location, c.kind, c.status, c.note, c.counted_by, cu.name counted_by_name, c.counted_at, c.local_date,
   ru.name reviewed_by_name, c.reviewed_at, c.is_demo,
   (SELECT COUNT(*) FROM count_lines l WHERE l.count_id = c.id) lines_count,
   (SELECT COUNT(*) FROM count_lines l WHERE l.count_id = c.id AND l.counted_m <> l.expected_m) diff_count
@@ -117,13 +118,14 @@ export function submitCount(db: DB, user: User, body: Record<string, unknown>, o
   }
   if (lines.length === 0) throw bad('Escribe la cantidad de al menos un producto.');
   const note = optStr(body.note, 'nota', 300);
+  const kind = body.kind === undefined ? 'libre' : oneOf(body.kind, 'tipo de conteo', COUNT_KINDS);
   const at = opts.at ?? nowIso();
   const isDemo = opts.isDemo ?? isDemoMode(db);
 
   return tx(db, () => {
     const r = db
-      .prepare('INSERT INTO counts(location, note, counted_by, counted_at, local_date, is_demo) VALUES (?,?,?,?,?,?)')
-      .run(sheet.location, note, user.id, at, localDate(new Date(at)), isDemo ? 1 : 0);
+      .prepare('INSERT INTO counts(location, kind, note, counted_by, counted_at, local_date, is_demo) VALUES (?,?,?,?,?,?,?)')
+      .run(sheet.location, kind, note, user.id, at, localDate(new Date(at)), isDemo ? 1 : 0);
     const id = Number(r.lastInsertRowid);
     const ins = db.prepare('INSERT INTO count_lines(count_id, item_id, item_name, expected_m, counted_m) VALUES (?,?,?,?,?)');
     for (const l of lines) ins.run(id, l.item.item_id, l.item.name, l.item.qty_m, l.countedM);
@@ -164,4 +166,111 @@ export function reviewCount(db: DB, admin: User, id: number, body: Record<string
     else db.prepare("UPDATE counts SET status='descartado', reviewed_by=?, reviewed_at=? WHERE id=?").run(admin.id, at, id);
     return getCount(db, admin, id);
   });
+}
+
+interface DayCount {
+  id: number;
+  counted_by_name: string;
+  counted_at: string;
+  status: CountStatus;
+}
+
+/** El último conteo (no descartado) de ese tipo, en esa ubicación y ese día. */
+function lastCount(db: DB, location: string, kind: CountKind, date: string): DayCount | null {
+  return (
+    (db
+      .prepare(
+        `SELECT c.id, u.name counted_by_name, c.counted_at, c.status FROM counts c JOIN users u ON u.id = c.counted_by
+         WHERE c.location = ? AND c.kind = ? AND c.local_date = ? AND c.status <> 'descartado' ORDER BY c.counted_at DESC LIMIT 1`,
+      )
+      .get(location, kind, date) as DayCount | undefined) ?? null
+  );
+}
+
+/** Qué ubicaciones ya se contaron al abrir y al cerrar ese día. */
+export function dayCountStatus(db: DB, date = localDate()) {
+  const used = new Set((db.prepare('SELECT DISTINCT location FROM items WHERE active = 1').all() as { location: string }[]).map((r) => r.location));
+  return LOCATIONS.filter((l) => used.has(l)).map((location) => ({
+    location,
+    apertura: lastCount(db, location, 'apertura', date),
+    cierre: lastCount(db, location, 'cierre', date),
+  }));
+}
+
+export interface ReconciliationLine {
+  item_id: number;
+  name: string;
+  location: Location;
+  unit: Unit;
+  base_unit: BaseUnit;
+  open_m: number;
+  entries_m: number;
+  produced_m: number;
+  used_m: number;
+  waste_m: number;
+  close_m: number;
+  /** Lo que de verdad gastó la cocina según la apertura y el cierre. */
+  real_m: number;
+  /** Lo que descontaron las ventas de caja (ventas − anulaciones) según las recetas. */
+  sales_m: number;
+  diff_m: number;
+}
+
+/**
+ * «Caja vs cocina» de un día: para cada producto contado al abrir y al cerrar, lo que
+ * descontaron las ventas frente a lo que realmente se gastó. Se mira solo lo que pasó
+ * entre la hora del conteo de apertura y la del cierre de su nevera.
+ */
+export function reconciliation(db: DB, date: unknown) {
+  if (typeof date !== 'string' || !isYmd(date)) throw bad('Fecha no válida.');
+  const status = dayCountStatus(db, date);
+  const lines: ReconciliationLine[] = [];
+  const sums = db.prepare(
+    `SELECT type, SUM(CASE WHEN delta_m > 0 THEN delta_m ELSE 0 END) pos, SUM(CASE WHEN delta_m < 0 THEN -delta_m ELSE 0 END) neg
+     FROM movements WHERE item_id = ? AND created_at >= ? AND created_at < ? GROUP BY type`,
+  );
+  for (const s of status) {
+    if (!s.apertura || !s.cierre || s.cierre.counted_at <= s.apertura.counted_at) continue;
+    const close = new Map(
+      (db.prepare('SELECT item_id, counted_m FROM count_lines WHERE count_id = ?').all(s.cierre.id) as { item_id: number; counted_m: number }[]).map((l) => [l.item_id, l.counted_m]),
+    );
+    const open = db
+      .prepare(
+        `SELECT l.item_id, i.name, i.location, i.unit, i.base_unit, l.counted_m FROM count_lines l JOIN items i ON i.id = l.item_id
+         WHERE l.count_id = ? ORDER BY i.sort_order, i.name COLLATE NOCASE`,
+      )
+      .all(s.apertura.id) as { item_id: number; name: string; location: Location; unit: Unit; base_unit: BaseUnit; counted_m: number }[];
+    for (const o of open) {
+      const closeM = close.get(o.item_id);
+      if (closeM === undefined) continue;
+      const by = new Map(
+        (sums.all(o.item_id, s.apertura.counted_at, s.cierre.counted_at) as { type: string; pos: number; neg: number }[]).map((r) => [r.type, r]),
+      );
+      const get = (type: string, k: 'pos' | 'neg') => by.get(type)?.[k] ?? 0;
+      const entries = get('entrada', 'pos');
+      const produced = get('produccion', 'pos');
+      const used = get('produccion', 'neg');
+      const waste = get('baja', 'neg');
+      // Una venta anulada devuelve lo que había descontado.
+      const sales = get('venta', 'neg') - get('anulacion', 'pos');
+      const real = realConsumption({ openM: o.counted_m, closeM, entriesM: entries, producedM: produced, usedForPrepM: used, wasteM: waste });
+      lines.push({
+        item_id: o.item_id,
+        name: o.name,
+        location: o.location,
+        unit: o.unit,
+        base_unit: o.base_unit,
+        open_m: o.counted_m,
+        entries_m: entries,
+        produced_m: produced,
+        used_m: used,
+        waste_m: waste,
+        close_m: closeM,
+        real_m: real,
+        sales_m: sales,
+        diff_m: real - sales,
+      });
+    }
+  }
+  return { date, status, lines };
 }

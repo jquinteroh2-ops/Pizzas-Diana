@@ -7,6 +7,9 @@ import type {
   Count,
   CountSheet,
   Dashboard,
+  DayCountStatus,
+  Reconciliation,
+  ReconciliationLine,
   DemoStatus,
   Item,
   KitchenReport,
@@ -45,10 +48,13 @@ import {
 } from '../../shared/dates.ts';
 import { can, EXTRA_PERMS, ROLES, type Action, type ExtraPerm, type Role } from '../../shared/permissions.ts';
 import {
+  COUNT_KINDS,
   LOCATIONS,
   productionYield,
+  realConsumption,
   scaleBatch,
   WASTE_REASONS,
+  type CountKind,
   type CountStatus,
   type ItemKind,
   type Location,
@@ -140,6 +146,7 @@ interface ShortageRec {
 interface CountRec {
   id: number;
   location: Location;
+  kind?: CountKind; // falta en los conteos guardados antes de la apertura/cierre
   status: CountStatus;
   note: string;
   counted_by: number;
@@ -1177,6 +1184,7 @@ class BrowserDB {
     const { lines, ...rest } = c;
     return {
       ...rest,
+      kind: c.kind ?? 'libre', // los conteos guardados antes no tenían tipo
       counted_by_name: this.state.users.find((u) => u.id === c.counted_by)?.name ?? '—',
       reviewed_by_name: this.state.users.find((u) => u.id === c.reviewed_by)?.name ?? null,
       lines_count: lines.length,
@@ -1221,6 +1229,7 @@ class BrowserDB {
     const c: CountRec = {
       id: this.state.seq.count++,
       location: sheet.location,
+      kind: body.kind === undefined ? 'libre' : oneOf(body.kind, 'tipo de conteo', COUNT_KINDS),
       status: 'pendiente',
       note: optStr(body.note, 300),
       counted_by: user.id,
@@ -1234,6 +1243,77 @@ class BrowserDB {
     this.state.counts.push(c);
     if (can(user, 'kitchen.manage') && body.apply !== false) this.applyCount(user, c, at);
     return this.countView(c, true);
+  }
+
+  /** El último conteo (no descartado) de ese tipo, en esa ubicación y ese día. */
+  private lastCount(location: Location, kind: CountKind, date: string) {
+    const c = this.state.counts
+      .filter((x) => x.location === location && (x.kind ?? 'libre') === kind && x.local_date === date && x.status !== 'descartado')
+      .sort((a, b) => b.counted_at.localeCompare(a.counted_at))[0];
+    if (!c) return null;
+    return { id: c.id, counted_by_name: this.state.users.find((u) => u.id === c.counted_by)?.name ?? '—', counted_at: c.counted_at, status: c.status };
+  }
+
+  dayCountStatus(date = localDate()): DayCountStatus[] {
+    const used = new Set(this.state.items.filter((i) => i.active).map((i) => i.location));
+    return LOCATIONS.filter((l) => used.has(l)).map((location) => ({
+      location,
+      apertura: this.lastCount(location, 'apertura', date),
+      cierre: this.lastCount(location, 'cierre', date),
+    }));
+  }
+
+  /** «Caja vs cocina»: igual que en el servidor (server/services/counts.ts → reconciliation). */
+  reconciliation(date: unknown): Reconciliation {
+    if (typeof date !== 'string' || !isYmd(date)) throw bad('Fecha no válida.');
+    const status = this.dayCountStatus(date);
+    const lines: ReconciliationLine[] = [];
+    for (const s of status) {
+      if (!s.apertura || !s.cierre || s.cierre.counted_at <= s.apertura.counted_at) continue;
+      const openRec = this.state.counts.find((c) => c.id === s.apertura!.id)!;
+      const closeRec = this.state.counts.find((c) => c.id === s.cierre!.id)!;
+      const close = new Map(closeRec.lines.map((l) => [l.item_id, l.counted_m]));
+      const from = s.apertura.counted_at;
+      const to = s.cierre.counted_at;
+      const open = openRec.lines.map((l) => ({ l, it: this.item(l.item_id) })).sort((a, b) => a.it.sort_order - b.it.sort_order || a.it.name.localeCompare(b.it.name, 'es'));
+      for (const { l, it } of open) {
+        const closeM = close.get(l.item_id);
+        if (closeM === undefined) continue;
+        let entries = 0;
+        let produced = 0;
+        let used = 0;
+        let waste = 0;
+        let sales = 0;
+        for (const m of this.state.movements) {
+          if (m.item_id !== it.id || m.created_at < from || m.created_at >= to) continue;
+          if (m.type === 'entrada' && m.delta_m > 0) entries += m.delta_m;
+          else if (m.type === 'produccion') {
+            if (m.delta_m > 0) produced += m.delta_m;
+            else used -= m.delta_m;
+          } else if (m.type === 'baja' && m.delta_m < 0) waste -= m.delta_m;
+          else if (m.type === 'venta' && m.delta_m < 0) sales -= m.delta_m;
+          else if (m.type === 'anulacion' && m.delta_m > 0) sales -= m.delta_m;
+        }
+        const real = realConsumption({ openM: l.counted_m, closeM, entriesM: entries, producedM: produced, usedForPrepM: used, wasteM: waste });
+        lines.push({
+          item_id: it.id,
+          name: it.name,
+          location: it.location,
+          unit: it.unit,
+          base_unit: it.base_unit,
+          open_m: l.counted_m,
+          entries_m: entries,
+          produced_m: produced,
+          used_m: used,
+          waste_m: waste,
+          close_m: closeM,
+          real_m: real,
+          sales_m: sales,
+          diff_m: real - sales,
+        });
+      }
+    }
+    return { date, status, lines };
   }
 
   private applyCount(admin: User, c: CountRec, at: string) {
@@ -1342,6 +1422,7 @@ class BrowserDB {
       wastes: this.listWastes(user, { from: today, to: today }).filter((w) => w.reported_by === user.id),
       shortages: this.listShortages('open'),
       counts: this.listCounts(user, {}).filter((c) => c.local_date === today && c.counted_by === user.id),
+      dayCounts: this.dayCountStatus(today),
     };
   }
 
@@ -1765,6 +1846,21 @@ function buildDemoState(keepUsers?: UserRec[]): State {
   let seq = 0;
   const saleIds: string[] = [];
 
+  // Apertura y cierre de la última semana; al cerrar, unos productos se gastaron un poco más de lo vendido.
+  const EXTRA_USE: Record<string, number> = { queso_mozzarella: 0.06, tocineta: 0.1, papas: 0.08, pepperoni: 0.07 };
+  const soldSince = (id: number, from: string) => s.movements.filter((m) => m.item_id === id && m.type === 'venta' && m.created_at >= from).reduce((n, m) => n - m.delta_m, 0);
+  const countAll = (kind: 'apertura' | 'cierre', at: string, openedAt?: string) => {
+    for (const location of new Set(CATALOG_ITEMS.map((c) => c.location))) {
+      const lines = CATALOG_ITEMS.filter((c) => c.location === location).map((c) => {
+        const it = db.item(itemId[c.key]);
+        const extra = kind === 'cierre' && openedAt ? Math.round(soldSince(it.id, openedAt) * (EXTRA_USE[c.key] ?? 0)) : 0;
+        return { item_id: it.id, qty: Math.max(0, it.qty_m - extra) / 1000, unit: it.base_unit };
+      });
+      const c = db.submitCount(cook1, { location, kind, lines }, { at, ...demo });
+      db.reviewCount(admin, c.id, { decision: 'aplicar' }, { at: new Date(new Date(at).getTime() + 15 * 60_000).toISOString() });
+    }
+  };
+
   for (let i = 0; i <= DAYS; i++) {
     const day = addDays(start, i);
     const dow = new Date(day + 'T00:00:00Z').getUTCDay();
@@ -1777,6 +1873,8 @@ function buildDemoState(keepUsers?: UserRec[]): State {
         if (cur.qty_m < target * 0.7) db.registerEntry(admin, cur.id, { qty: Math.ceil((target - cur.qty_m) / milliOf(c.unit)), unit: c.unit, reason: 'Compra semanal a proveedor (DEMO)' }, { at: bogota(day, 9, 0), ...demo });
       }
     }
+    const withCounts = i >= DAYS - 7;
+    if (withCounts && new Date(bogota(day, 8, 30)) <= now) countAll('apertura', bogota(day, 8, 30));
     const plan = WEEK_PLAN[dow];
     if (day >= planFrom) for (const key of plan) db.addTask({ date: day, preparation_id: prepId[key] }, demo);
     plan.forEach((key, idx) => {
@@ -1814,8 +1912,10 @@ function buildDemoState(keepUsers?: UserRec[]): State {
         db.reviewWaste(admin, w.id, { decision: 'aprobar', note: 'Revisada con la foto' }, { at: bogota(day, 22, 0) });
       }
     }
+    // Cierre del día, después de las bajas de la noche.
+    if (withCounts && !isToday) countAll('cierre', bogota(day, 23, 15), bogota(day, 8, 30));
   }
-  for (const idx of [Math.floor(saleIds.length * 0.4), Math.floor(saleIds.length * 0.8)]) {
+  for (const idx of [Math.floor(saleIds.length * 0.4), Math.floor(saleIds.length * 0.6)]) {
     const sale = s.sales.find((x) => x.id === saleIds[idx]);
     if (sale) db.annulSale(admin, sale.id, { reason: 'Registrada por error (DEMO)' }, { at: new Date(new Date(sale.created_at).getTime() + 600_000).toISOString() });
   }
@@ -1960,6 +2060,8 @@ async function route(method: string, path: string, body: Body): Promise<unknown>
   if ((mm = m(/^\/shortages\/(\d+)\/status$/))) return need('kitchen.manage'), write(() => db.setShortageStatus(Number(mm![1]), body));
   if (clean === '/shopping-list') return need('kitchen.manage'), db.shoppingList();
   if (clean === '/counts/sheet') return need('kitchen.use'), db.countSheet(qs('location'));
+  if (clean === '/counts/day') return need('kitchen.use'), db.dayCountStatus(qs('date') ?? localDate());
+  if (clean === '/reconciliation') return need('kitchen.manage'), db.reconciliation(qs('date') ?? localDate());
   if (clean === '/counts' && GET) return need('kitchen.use'), db.listCounts(user, { status: qs('status'), limit: qn('limit') });
   if (clean === '/counts' && POST) return need('kitchen.use'), write(() => db.submitCount(user, body));
   if ((mm = m(/^\/counts\/(\d+)\/review$/))) return need('kitchen.manage'), write(() => db.reviewCount(user, Number(mm![1]), body));
