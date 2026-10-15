@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
-import { Lock, User as UserIcon, Loader2, ShieldCheck, Package, BarChart3, ShoppingBag } from 'lucide-react';
-import { api, ApiError } from '../lib/api';
+import { Lock, User as UserIcon, Loader2, ShieldCheck, Package, BarChart3, ShoppingBag, ChefHat } from 'lucide-react';
+import { api, ApiError, isStaticHost } from '../lib/api';
+import { DEMO_LOGINS } from '../lib/browserStorage';
 import type { Session } from '../lib/types';
 import { Logo, PizzaMark } from '../components/Logo';
 import { Field } from '../components/ui';
@@ -15,6 +16,19 @@ export default function Login({ session, onDone }: { session: Session; onDone: (
   const [password2, setPassword2] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const enter = async (u: string, p: string) => {
+    setError(null);
+    setBusy(true);
+    try {
+      await api.post('/login', { username: u, password: p });
+      await onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'No se pudo iniciar sesión.');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -50,12 +64,13 @@ export default function Login({ session, onDone }: { session: Session; onDone: (
             <span className="text-crust-300">bajo control.</span>
           </p>
           <p className="mt-5 text-base text-white/65">
-            Registra lo que vendes y el inventario se descuenta solo, según la receta de cada pizza.
+            Caja vende, la cocina prepara y avisa lo que falta, y el inventario se descuenta solo, según la receta de cada plato.
           </p>
           <ul className="mt-10 space-y-4 text-sm text-white/80">
             {[
               [ShoppingBag, 'Ventas por cantidades en segundos'],
-              [Package, 'Ingredientes descontados automáticamente'],
+              [ChefHat, 'Cocina: preparaciones, mermas, bajas y conteos'],
+              [Package, 'Faltantes y lista de compras al día'],
               [BarChart3, 'Reportes diarios, semanales y mensuales'],
             ].map(([Icon, t], i) => {
               const I = Icon as typeof Package;
@@ -132,6 +147,30 @@ export default function Login({ session, onDone }: { session: Session; onDone: (
               {setup ? 'Crear administrador y entrar' : 'Iniciar sesión'}
             </button>
           </form>
+
+          {!setup && isStaticHost() && (
+            <div className="mt-8 rounded-2xl border border-violet-200 bg-violet-50 p-4">
+              <p className="text-sm font-semibold text-violet-900">Demostración: entra como…</p>
+              <p className="mt-0.5 text-xs text-violet-800">Cada rol ve una pantalla distinta. Contraseña de prueba: demo1234</p>
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                {DEMO_LOGINS.map((d) => {
+                  const Icon = d.role === 'admin' ? ShieldCheck : d.role === 'caja' ? ShoppingBag : ChefHat;
+                  return (
+                    <button
+                      key={d.username}
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void enter(d.username, d.password)}
+                      className="flex flex-col items-center gap-1.5 rounded-xl bg-white px-2 py-3 text-xs font-semibold text-ink-900 shadow-sm ring-1 ring-violet-200 transition hover:ring-violet-400 active:scale-[0.97]"
+                    >
+                      <Icon className="size-5 text-violet-700" />
+                      {d.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           <p className="mt-8 flex items-center gap-2 text-xs text-ink-500">
             <ShieldCheck className="size-4 text-emerald-700" /> Contraseñas cifradas · sesión protegida

@@ -12,11 +12,14 @@ import {
   Menu,
   X,
   FlaskConical,
+  ChefHat,
+  CalendarCheck,
   type LucideIcon,
 } from 'lucide-react';
 import { Logo } from './Logo';
 import { cx } from './ui';
 import { navigate, useApp, type Action, type RouteName } from '../lib/app';
+import { ROLE_LABELS } from '../../shared/permissions.ts';
 
 interface NavItem {
   name: RouteName;
@@ -25,12 +28,16 @@ interface NavItem {
   need?: Action;
 }
 
+// El orden importa: la primera sección permitida es la pantalla de inicio de cada rol
+// (administrador → Inicio, caja → Registrar venta, cocina → Cocina).
 export const NAV: NavItem[] = [
   { name: 'inicio', label: 'Inicio', icon: LayoutDashboard, need: 'reports.view' },
   { name: 'vender', label: 'Registrar venta', icon: ShoppingBag, need: 'sales.create' },
+  { name: 'cocina', label: 'Cocina', icon: ChefHat, need: 'kitchen.report' },
+  { name: 'plan', label: 'Plan de preparación', icon: CalendarCheck, need: 'kitchen.use' },
   { name: 'inventario', label: 'Inventario', icon: Package, need: 'inventory.view' },
   { name: 'productos', label: 'Productos y recetas', icon: Pizza, need: 'products.edit' },
-  { name: 'historial', label: 'Historial de ventas', icon: ReceiptText },
+  { name: 'historial', label: 'Historial de ventas', icon: ReceiptText, need: 'sales.create' },
   { name: 'reportes', label: 'Reportes', icon: BarChart3, need: 'reports.view' },
   { name: 'usuarios', label: 'Usuarios', icon: Users, need: 'users.manage' },
   { name: 'configuracion', label: 'Configuración', icon: Settings, need: 'settings.manage' },
@@ -40,10 +47,16 @@ export function allowedNav(can: (a: Action) => boolean) {
   return NAV.filter((n) => !n.need || can(n.need));
 }
 
+/** La caja usa «Cocina» solo para avisar faltantes y bajas. */
+function navLabel(n: NavItem, can: (a: Action) => boolean) {
+  if (n.name === 'cocina' && !can('kitchen.use')) return 'Faltantes y bajas';
+  return n.label;
+}
+
 function initials(name: string) {
   return name
     .split(/\s+/)
-    .filter(Boolean)
+    .filter((w) => /^\p{L}/u.test(w)) // «Diana (Administradora)» → «DA», sin el paréntesis
     .slice(0, 2)
     .map((w) => w[0]?.toUpperCase())
     .join('');
@@ -53,8 +66,8 @@ export function Layout({ current, children }: { current: RouteName; children: Re
   const { user, can, logout, session } = useApp();
   const [open, setOpen] = useState(false);
   const items = allowedNav(can);
-  // En el celular, la barra inferior muestra las 4 secciones principales.
-  const bottom = items.filter((i) => ['inicio', 'vender', 'inventario', 'historial'].includes(i.name)).slice(0, 4);
+  // En el celular, la barra inferior muestra las 4 secciones principales de cada rol.
+  const bottom = items.filter((i) => ['inicio', 'vender', 'cocina', 'plan', 'inventario', 'historial'].includes(i.name)).slice(0, 4);
 
   const go = (n: RouteName) => {
     setOpen(false);
@@ -79,7 +92,7 @@ export function Layout({ current, children }: { current: RouteName; children: Re
             <span className={cx('grid size-8 place-items-center rounded-lg transition-colors', active ? 'bg-brand-600 text-white' : 'bg-white/[0.04] text-white/70 group-hover:text-white')}>
               <Icon className="size-[18px]" />
             </span>
-            {n.label}
+            {navLabel(n, can)}
           </button>
         );
       })}
@@ -91,7 +104,7 @@ export function Layout({ current, children }: { current: RouteName; children: Re
       <div className="grid size-10 shrink-0 place-items-center rounded-full bg-crust-300 text-sm font-bold text-ink-900">{initials(user.name)}</div>
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-semibold text-white">{user.name}</p>
-        <p className="text-xs text-white/50">{user.role === 'admin' ? 'Administrador' : 'Empleado'}</p>
+        <p className="text-xs text-white/50">{ROLE_LABELS[user.role]}</p>
       </div>
       <button onClick={logout} className="rounded-lg p-2 text-white/60 transition-colors hover:bg-white/10 hover:text-white" title="Cerrar sesión" aria-label="Cerrar sesión">
         <LogOut className="size-[18px]" />
@@ -165,7 +178,7 @@ export function Layout({ current, children }: { current: RouteName; children: Re
           return (
             <button key={n.name} onClick={() => go(n.name)} className={cx('flex flex-col items-center gap-1 py-2.5 text-[11px] font-semibold', active ? 'text-brand-600' : 'text-ink-500')}>
               <Icon className="size-5" />
-              {n.label.split(' ')[0]}
+              {n.name === 'plan' ? 'Plan' : navLabel(n, can).split(' ')[0]}
             </button>
           );
         })}

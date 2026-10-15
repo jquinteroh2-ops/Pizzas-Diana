@@ -1,25 +1,9 @@
 import { scryptSync, randomBytes, timingSafeEqual, createHash } from 'node:crypto';
 import { type DB, nowIso } from '../db.ts';
 import { AppError, bad, conflict, forbidden, notFound, oneOf, str } from '../errors.ts';
+import { can as canShared, EXTRA_PERMS, ROLES, type Action, type ExtraPerm, type Role } from '../../shared/permissions.ts';
 
-export type Role = 'admin' | 'empleado';
-// Permisos extra que el administrador puede conceder a un empleado.
-export const EXTRA_PERMS = ['entradas', 'reportes', 'historial_completo'] as const;
-export type ExtraPerm = (typeof EXTRA_PERMS)[number];
-
-export type Action =
-  | 'users.manage'
-  | 'settings.manage'
-  | 'inventory.view'
-  | 'inventory.edit'
-  | 'inventory.adjust'
-  | 'inventory.entry'
-  | 'products.edit'
-  | 'sales.create'
-  | 'sales.annul'
-  | 'sales.viewAll'
-  | 'reports.view';
-
+export { EXTRA_PERMS, type Action, type ExtraPerm, type Role };
 export interface User {
   id: number;
   username: string;
@@ -61,20 +45,7 @@ function toUser(r: UserRow): User {
 
 /** Matriz de permisos. Se usa en el servidor en cada ruta (no solo en la interfaz). */
 export function can(user: User, action: Action): boolean {
-  if (user.role === 'admin') return true;
-  switch (action) {
-    case 'sales.create':
-      return true;
-    case 'inventory.entry':
-    case 'inventory.view':
-      return user.perms.includes('entradas');
-    case 'reports.view':
-      return user.perms.includes('reportes');
-    case 'sales.viewAll':
-      return user.perms.includes('historial_completo');
-    default:
-      return false;
-  }
+  return canShared(user, action);
 }
 
 export function assertCan(user: User, action: Action): void {
@@ -176,7 +147,7 @@ export function authenticate(db: DB, username: unknown, password: unknown): User
 function insertUser(db: DB, body: Record<string, unknown>, isDemo: boolean): User {
   const username = validUsername(body.username);
   const name = str(body.name, 'nombre', { max: 80 });
-  const role = oneOf(body.role, 'rol', ['admin', 'empleado'] as const);
+  const role = oneOf(body.role, 'rol', ROLES);
   const perms = role === 'admin' ? [] : validPerms(body.perms);
   const pass = validPassword(body.password);
   if (db.prepare('SELECT 1 FROM users WHERE username = ?').get(username)) throw conflict('Ese nombre de usuario ya existe.');
@@ -209,7 +180,7 @@ function activeAdmins(db: DB): number {
 export function updateUser(db: DB, actor: User, id: number, body: Record<string, unknown>): User {
   const current = getUser(db, id);
   const name = body.name === undefined ? current.name : str(body.name, 'nombre', { max: 80 });
-  const role = body.role === undefined ? current.role : oneOf(body.role, 'rol', ['admin', 'empleado'] as const);
+  const role = body.role === undefined ? current.role : oneOf(body.role, 'rol', ROLES);
   const perms = role === 'admin' ? [] : body.perms === undefined ? current.perms : validPerms(body.perms);
   const active = body.active === undefined ? current.active : body.active === true;
 

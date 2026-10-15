@@ -1,17 +1,24 @@
 import { useState, type FormEvent } from 'react';
-import { Plus, Pencil, KeyRound, Loader2, ShieldCheck, User as UserIcon, Users as UsersIcon } from 'lucide-react';
+import { Plus, Pencil, KeyRound, Loader2, ShieldCheck, ChefHat, ShoppingBag, Users as UsersIcon, type LucideIcon } from 'lucide-react';
 import { api } from '../lib/api';
 import { useApi, useApp } from '../lib/app';
 import type { ExtraPerm, Role, User } from '../lib/types';
 import { useToast } from '../components/toast';
-import { PageHeader, Loading, ErrorBox, EmptyState, Badge, DemoTag, Modal, Field, Segmented, cx } from '../components/ui';
+import { PageHeader, Loading, ErrorBox, EmptyState, Badge, DemoTag, Modal, Field, cx } from '../components/ui';
 import { formatDateTime } from '../../shared/dates.ts';
+import { ROLE_LABELS } from '../../shared/permissions.ts';
 
-const PERMS: { value: ExtraPerm; label: string; hint: string }[] = [
-  { value: 'entradas', label: 'Registrar entradas de mercancía', hint: 'Puede ver el inventario y sumar lo que llega del proveedor. No puede hacer ajustes.' },
-  { value: 'reportes', label: 'Ver tablero y reportes', hint: 'Accede a las estadísticas de unidades vendidas.' },
-  { value: 'historial_completo', label: 'Ver historial de todos', hint: 'Si no, solo ve las ventas que registró él.' },
+const PERMS: { value: ExtraPerm; label: string; hint: string; roles: Role[] }[] = [
+  { value: 'entradas', label: 'Registrar entradas de mercancía', hint: 'Puede sumar lo que llega del proveedor. No puede hacer ajustes.', roles: ['caja', 'cocina'] },
+  { value: 'reportes', label: 'Ver tablero y reportes', hint: 'Accede a las estadísticas de ventas y de cocina.', roles: ['caja', 'cocina'] },
+  { value: 'historial_completo', label: 'Ver historial de todos', hint: 'Si no, solo ve las ventas que registró.', roles: ['caja'] },
 ];
+
+const ROLE_INFO: Record<Role, { icon: LucideIcon; text: string; tone: string }> = {
+  admin: { icon: ShieldCheck, text: 'Ve y controla todo: inventario, cocina, recetas, autorizaciones, estadísticas y usuarios.', tone: 'bg-brand-600 text-white' },
+  caja: { icon: ShoppingBag, text: 'Registra las ventas y avisa faltantes y bajas. No cambia recetas ni existencias.', tone: 'bg-crust-300 text-ink-900' },
+  cocina: { icon: ChefHat, text: 'Ve el inventario, registra lo que prepara, cuenta neveras y avisa faltantes y bajas. No vende ni ve estadísticas.', tone: 'bg-emerald-600 text-white' },
+};
 
 export default function UsersPage() {
   const users = useApi<User[]>('/users');
@@ -40,21 +47,19 @@ export default function UsersPage() {
           {users.data.map((u) => (
             <article key={u.id} className={cx('card p-5', !u.active && 'opacity-60')}>
               <div className="flex items-start gap-3">
-                <span className={cx('grid size-11 place-items-center rounded-full', u.role === 'admin' ? 'bg-brand-600 text-white' : 'bg-cream-200 text-ink-700')}>
-                  {u.role === 'admin' ? <ShieldCheck className="size-5" /> : <UserIcon className="size-5" />}
-                </span>
+                <RoleIcon role={u.role} />
                 <div className="min-w-0 flex-1">
                   <h3 className="truncate font-semibold text-ink-900">{u.name}</h3>
                   <p className="text-sm text-ink-500">@{u.username}</p>
                   <div className="mt-2 flex flex-wrap gap-1.5">
-                    <Badge tone={u.role === 'admin' ? 'red' : 'neutral'}>{u.role === 'admin' ? 'Administrador' : 'Empleado'}</Badge>
+                    <Badge tone={u.role === 'admin' ? 'red' : u.role === 'cocina' ? 'green' : 'amber'}>{ROLE_LABELS[u.role]}</Badge>
                     {!u.active && <Badge tone="dark">Desactivado</Badge>}
                     {u.is_demo && <DemoTag />}
                     {u.is_demo && <Badge>Sin acceso</Badge>}
                   </div>
                 </div>
               </div>
-              {u.role === 'empleado' && u.perms.length > 0 && (
+              {u.role !== 'admin' && u.perms.length > 0 && (
                 <ul className="mt-3 space-y-1 text-xs text-ink-500">
                   {u.perms.map((p) => (
                     <li key={p}>+ {PERMS.find((x) => x.value === p)?.label}</li>
@@ -82,13 +87,23 @@ export default function UsersPage() {
   );
 }
 
+function RoleIcon({ role }: { role: Role }) {
+  const r = ROLE_INFO[role];
+  const Icon = r.icon;
+  return (
+    <span className={cx('grid size-11 shrink-0 place-items-center rounded-full', r.tone)}>
+      <Icon className="size-5" />
+    </span>
+  );
+}
+
 function UserForm({ user, onClose }: { user?: User; onClose: () => void }) {
   const { bump, user: me, reloadSession } = useApp();
   const toast = useToast();
   const [name, setName] = useState(user?.name ?? '');
   const [username, setUsername] = useState(user?.username ?? '');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState<Role>(user?.role ?? 'empleado');
+  const [role, setRole] = useState<Role>(user?.role ?? 'cocina');
   const [perms, setPerms] = useState<ExtraPerm[]>(user?.perms ?? []);
   const [active, setActive] = useState(user?.active ?? true);
   const [busy, setBusy] = useState(false);
@@ -145,25 +160,32 @@ function UserForm({ user, onClose }: { user?: User; onClose: () => void }) {
         )}
         <div>
           <span className="label">Rol</span>
-          <Segmented<Role>
-            value={role}
-            onChange={setRole}
-            options={[
-              { value: 'empleado', label: 'Empleado' },
-              { value: 'admin', label: 'Administrador' },
-            ]}
-          />
-          <p className="mt-2 text-xs text-ink-500">
-            {role === 'admin'
-              ? 'Acceso completo: inventario, recetas, ajustes, anulaciones, usuarios y configuración.'
-              : 'Puede ver los productos activos y registrar ventas. No puede cambiar recetas ni existencias.'}
-          </p>
+          <div className="grid gap-2">
+            {(['cocina', 'caja', 'admin'] as const).map((r) => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => {
+                  setRole(r);
+                  setPerms((ps) => ps.filter((p) => PERMS.find((x) => x.value === p)?.roles.includes(r)));
+                }}
+                className={cx('flex items-center gap-3 rounded-2xl border p-3 text-left transition-all', role === r ? 'border-ink-900 ring-1 ring-ink-900' : 'border-cream-300 hover:border-ink-400/50')}
+                aria-pressed={role === r}
+              >
+                <RoleIcon role={r} />
+                <span>
+                  <span className="block text-sm font-semibold text-ink-900">{ROLE_LABELS[r]}</span>
+                  <span className="block text-xs text-ink-500">{ROLE_INFO[r].text}</span>
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
-        {role === 'empleado' && (
+        {role !== 'admin' && (
           <fieldset className="space-y-2 rounded-2xl bg-cream-50 p-4">
             <legend className="sr-only">Permisos adicionales</legend>
             <p className="text-sm font-semibold text-ink-700">Permisos adicionales</p>
-            {PERMS.map((p) => (
+            {PERMS.filter((p) => p.roles.includes(role)).map((p) => (
               <label key={p.value} className="flex cursor-pointer items-start gap-3">
                 <input
                   type="checkbox"

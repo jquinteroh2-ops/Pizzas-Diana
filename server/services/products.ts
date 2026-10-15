@@ -2,7 +2,7 @@ import { type DB, nowIso, tx, isDemoMode } from '../db.ts';
 import { bad, conflict, notFound, num, oneOf, optStr, str } from '../errors.ts';
 import { compatible, isUnit, toMilli, type BaseUnit, type Unit } from '../../shared/units.ts';
 
-export const PRODUCT_CATEGORIES = ['Pizzas', 'Bebidas', 'Entradas', 'Postres', 'Otros'] as const;
+export const PRODUCT_CATEGORIES = ['Pizzas', 'Hamburguesas', 'Perros', 'Salchipapas', 'Picadas', 'Pollo', 'Bebidas', 'Entradas', 'Postres', 'Otros'] as const;
 export type ProductType = 'preparado' | 'directo';
 
 export interface RecipeLine {

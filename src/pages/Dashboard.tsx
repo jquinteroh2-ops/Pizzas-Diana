@@ -11,10 +11,14 @@ import {
   ReceiptText,
   TrendingUp,
   PieChart as PieIcon,
+  ChefHat,
+  Inbox,
+  Megaphone,
+  CalendarCheck,
   type LucideIcon,
 } from 'lucide-react';
 import { navigate, useApi, useApp } from '../lib/app';
-import type { Charts, Dashboard as DashboardData } from '../lib/types';
+import type { Charts, Dashboard as DashboardData, KitchenSummary } from '../lib/types';
 import { PageHeader, Loading, ErrorBox, EmptyState, Segmented, StockBadge, DemoTag, Badge, cx } from '../components/ui';
 import { UnitsLine, TopProductsBars, ShareDonut } from '../components/charts';
 import { formatQty, formatNumber } from '../../shared/units.ts';
@@ -64,6 +68,87 @@ function Panel({ title, icon: Icon, actions, children, className }: { title: str
 }
 
 const rangeText = (r: { from: string; to: string }) => (r.from === r.to ? shortDate(r.from) : `${shortDate(r.from)} – ${shortDate(r.to)}`);
+
+/** Lo que el administrador tiene que atender de la cocina, de un vistazo. */
+function KitchenPanel({ k }: { k: KitchenSummary }) {
+  const tiles: { icon: LucideIcon; label: string; value: string; hint: string; alert: boolean; go: () => void }[] = [
+    {
+      icon: Inbox,
+      label: 'Por autorizar',
+      value: String(k.pendingWastes + k.pendingCounts),
+      hint: `${k.pendingWastes} bajas · ${k.pendingCounts} conteos`,
+      alert: k.pendingWastes + k.pendingCounts > 0,
+      go: () => navigate('cocina', { tab: 'pendientes' }),
+    },
+    {
+      icon: Megaphone,
+      label: 'Faltantes avisados',
+      value: String(k.openShortages),
+      hint: 'en la lista de compras',
+      alert: k.openShortages > 0,
+      go: () => navigate('cocina', { tab: 'compras' }),
+    },
+    {
+      icon: CalendarCheck,
+      label: 'Plan de hoy',
+      value: k.tasksToday.total ? `${k.tasksToday.done}/${k.tasksToday.total}` : '—',
+      hint: k.tasksToday.total ? 'preparaciones hechas' : 'sin plan para hoy',
+      alert: false,
+      go: () => navigate('plan'),
+    },
+    {
+      icon: ChefHat,
+      label: 'Preparado esta semana',
+      value: String(k.productionsWeek),
+      hint: k.lowYield.length ? `${k.lowYield.length} con rendimiento bajo` : 'todo con buen rendimiento',
+      alert: k.lowYield.length > 0,
+      go: () => navigate('cocina', { tab: 'registro' }),
+    },
+  ];
+  return (
+    <section className="card mt-6 overflow-hidden">
+      <div className="flex items-center justify-between gap-3 border-b border-cream-200 px-5 py-4 sm:px-6">
+        <h2 className="flex items-center gap-2 font-display text-lg font-semibold text-ink-900">
+          <ChefHat className="size-5 text-brand-600" /> Cocina
+        </h2>
+        <button className="btn-ghost btn-sm" onClick={() => navigate('cocina')}>
+          Abrir cocina <ChevronRight className="size-4" />
+        </button>
+      </div>
+      <div className="grid grid-cols-2 divide-cream-200 lg:grid-cols-4 lg:divide-x">
+        {tiles.map((t) => {
+          const Icon = t.icon;
+          return (
+            <button key={t.label} onClick={t.go} className="flex items-start gap-3 p-4 text-left transition-colors hover:bg-cream-50 sm:p-5">
+              <span className={cx('grid size-10 shrink-0 place-items-center rounded-xl', t.alert ? 'bg-brand-600 text-white' : 'bg-cream-200 text-ink-700')}>
+                <Icon className="size-5" />
+              </span>
+              <span className="min-w-0">
+                <span className="block font-display text-2xl leading-none font-semibold text-ink-900 tabular-nums">{t.value}</span>
+                <span className="mt-1 block text-sm font-medium text-ink-700">{t.label}</span>
+                <span className="block text-xs text-ink-500">{t.hint}</span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      {k.lowYield.length > 0 && (
+        <div className="border-t border-cream-200 bg-brand-50/50 px-5 py-3 sm:px-6">
+          <p className="mb-1.5 text-xs font-bold tracking-wide text-brand-800 uppercase">Rendimiento bajo (últimos 7 días)</p>
+          <ul className="flex flex-wrap gap-2">
+            {k.lowYield.map((p) => (
+              <li key={p.id}>
+                <Badge tone="red">
+                  {p.preparation_name} · {formatNumber(p.efficiency_pct ?? 0)} % · {shortDate(p.local_date)} · {p.user_name}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  );
+}
 
 export default function Dashboard() {
   const { user, can } = useApp();
@@ -116,6 +201,8 @@ export default function Dashboard() {
         <Kpi icon={AlertTriangle} label="Inventario bajo" value={d.stock.low} hint="bajo el mínimo" tone="amber" onClick={can('inventory.view') ? () => navigate('inventario', { estado: 'bajo' }) : undefined} />
         <Kpi icon={XCircle} label="Agotados" value={d.stock.out} hint="sin existencias" tone="danger" onClick={can('inventory.view') ? () => navigate('inventario', { estado: 'agotado' }) : undefined} />
       </div>
+
+      {can('kitchen.manage') && <KitchenPanel k={d.kitchen} />}
 
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
         <Panel

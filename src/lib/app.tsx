@@ -1,42 +1,28 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, ApiError } from './api';
 import type { Session, User } from './types';
+import { can as canShared, type Action } from '../../shared/permissions.ts';
 
-export type Action =
-  | 'users.manage'
-  | 'settings.manage'
-  | 'inventory.view'
-  | 'inventory.edit'
-  | 'inventory.adjust'
-  | 'inventory.entry'
-  | 'products.edit'
-  | 'sales.create'
-  | 'sales.annul'
-  | 'sales.viewAll'
-  | 'reports.view';
+export type { Action };
 
 /** Misma matriz que el servidor. Solo sirve para mostrar u ocultar opciones: la seguridad real está en el backend. */
 export function canDo(user: User | null, action: Action): boolean {
-  if (!user) return false;
-  if (user.role === 'admin') return true;
-  switch (action) {
-    case 'sales.create':
-      return true;
-    case 'inventory.entry':
-    case 'inventory.view':
-      return user.perms.includes('entradas');
-    case 'reports.view':
-      return user.perms.includes('reportes');
-    case 'sales.viewAll':
-      return user.perms.includes('historial_completo');
-    default:
-      return false;
-  }
+  return canShared(user, action);
 }
 
 // ---------- Rutas por hash (#/inventario?item=3) ----------
 
-export type RouteName = 'inicio' | 'inventario' | 'productos' | 'vender' | 'historial' | 'reportes' | 'usuarios' | 'configuracion';
+export type RouteName =
+  | 'inicio'
+  | 'cocina'
+  | 'plan'
+  | 'inventario'
+  | 'productos'
+  | 'vender'
+  | 'historial'
+  | 'reportes'
+  | 'usuarios'
+  | 'configuracion';
 
 export interface Route {
   name: RouteName;

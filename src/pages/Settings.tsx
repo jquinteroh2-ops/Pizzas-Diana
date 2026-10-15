@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { FlaskConical, RotateCcw, Trash2, Database, KeyRound, Loader2, Info } from 'lucide-react';
+import { FlaskConical, RotateCcw, Trash2, Database, KeyRound, Loader2, Info, ClipboardList } from 'lucide-react';
 import { api } from '../lib/api';
 import { useApi, useApp } from '../lib/app';
 import type { DemoStatus } from '../lib/types';
@@ -11,7 +11,7 @@ type DemoAction = 'load' | 'reset' | 'clear';
 const COPY: Record<DemoAction, { title: string; text: string; button: string; ok: string }> = {
   load: {
     title: 'Cargar datos de demostración',
-    text: 'Se crearán 15 artículos de inventario, 7 productos con sus recetas, 2 empleados ficticios sin acceso y unas 5 semanas de ventas con sus movimientos de inventario. Todo quedará marcado como DEMO y podrá borrarse después sin dejar rastro.',
+    text: 'Se cargará el inventario de Pizza Diana por nevera, sus preparaciones, el menú con recetas, una cajera y dos cocineros ficticios sin acceso, y unas 5 semanas de ventas, preparaciones, bajas y conteos. Todo quedará marcado como DEMO y podrá borrarse después sin dejar rastro.',
     button: 'Cargar demostración',
     ok: 'Demostración cargada',
   },
@@ -118,6 +118,7 @@ export default function SettingsPage() {
         </section>
 
         <ChangePassword />
+        {s && !s.demoMode && <CatalogCard />}
       </div>
 
       <ConfirmModal
@@ -132,6 +133,46 @@ export default function SettingsPage() {
         {action && COPY[action].text}
       </ConfirmModal>
     </>
+  );
+}
+
+/** Carga los productos de las hojas de Pizza Diana (con existencia 0), sus preparaciones y el menú. */
+function CatalogCard() {
+  const { bump } = useApp();
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const run = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post<{ items: number; preparations: number; products: number }>('/settings/catalog');
+      toast.success('Catálogo cargado', `${r.items} productos de inventario, ${r.preparations} preparaciones y ${r.products} platos del menú.`);
+      setOpen(false);
+      bump();
+    } catch (e) {
+      toast.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="card p-6 lg:col-span-2">
+      <h2 className="flex items-center gap-2 font-display text-lg font-semibold">
+        <ClipboardList className="size-5 text-brand-600" /> Catálogo de Pizza Diana
+      </h2>
+      <p className="mt-2 text-sm text-ink-500">
+        Carga de una vez lo que está en las hojas de inventario de la pizzería (congelador, nevera negra, nevera Coca-Cola y bodega), las preparaciones de cocina (masa,
+        cebolla caramelizada, pechuga desmechada…) y el menú con recetas sugeridas. Todo queda con existencia 0, listo para el primer conteo. Lo que ya exista con el
+        mismo nombre no se toca.
+      </p>
+      <p className="mt-2 text-xs text-amber-800">Las cantidades por plato son sugeridas: revísalas con el dueño en «Productos y recetas» antes de vender.</p>
+      <button className="btn-primary mt-4" onClick={() => setOpen(true)}>
+        <Database className="size-4" /> Cargar catálogo
+      </button>
+      <ConfirmModal open={open} onClose={() => setOpen(false)} onConfirm={() => void run()} busy={busy} title="Cargar catálogo de Pizza Diana" confirmText="Cargar">
+        Se agregarán los productos, preparaciones y platos que todavía no existan. No se borra nada.
+      </ConfirmModal>
+    </section>
   );
 }
 

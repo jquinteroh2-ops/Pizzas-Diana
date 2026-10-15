@@ -1,12 +1,26 @@
 import { type DB, nowIso, tx, isDemoMode } from '../db.ts';
-import { bad, conflict, notFound, num, oneOf, str } from '../errors.ts';
+import { bad, conflict, notFound, num, oneOf, optStr, str } from '../errors.ts';
 import { baseOf, compatible, isUnit, stockStatus, toMilli, type BaseUnit, type Unit, type StockStatus } from '../../shared/units.ts';
+import { ITEM_KINDS, LOCATIONS, type ItemKind, type Location } from '../../shared/kitchen.ts';
 import type { User } from './users.ts';
 
-export const CATEGORIES = ['Ingredientes', 'Bebidas', 'Empaques', 'Productos preparados', 'Otros'] as const;
+export const CATEGORIES = [
+  'Carnes y embutidos',
+  'Lácteos',
+  'Verduras y frutas',
+  'Salsas y aderezos',
+  'Masas y panes',
+  'Abarrotes',
+  'Ingredientes',
+  'Productos preparados',
+  'Bebidas',
+  'Empaques',
+  'Otros',
+] as const;
 export type Category = (typeof CATEGORIES)[number];
 
-export type MovementType = 'inicial' | 'entrada' | 'ajuste' | 'venta' | 'anulacion';
+export const MOVEMENT_TYPES = ['inicial', 'entrada', 'ajuste', 'venta', 'anulacion', 'produccion', 'baja', 'conteo'] as const;
+export type MovementType = (typeof MOVEMENT_TYPES)[number];
 
 export interface Item {
   id: number;
@@ -17,6 +31,11 @@ export interface Item {
   qty_m: number;
   min_m: number;
   status: StockStatus;
+  kind: ItemKind;
+  location: Location;
+  pack_size_m: number;
+  pack_label: string;
+  sort_order: number;
   active: boolean;
   is_demo: boolean;
   created_at: string;
@@ -39,6 +58,23 @@ function unitOf(v: unknown): Unit {
 
 export function listItems(db: DB): Item[] {
   return (db.prepare('SELECT * FROM items ORDER BY name COLLATE NOCASE').all() as unknown as ItemRow[]).map(toItem);
+}
+
+/** Campos de cocina de un artículo: ubicación, tipo y presentación en paquetes. */
+function kitchenFields(body: Record<string, unknown>, unit: Unit, current?: Item) {
+  const location = body.location === undefined ? (current?.location ?? 'Otro') : oneOf(body.location, 'ubicación', LOCATIONS);
+  const kind = body.kind === undefined ? (current?.kind ?? 'insumo') : oneOf(body.kind, 'tipo', ITEM_KINDS);
+  let packSize = current?.pack_size_m ?? 0;
+  if (body.pack_size !== undefined && body.pack_size !== null && body.pack_size !== '') {
+    const packUnit = body.pack_unit === undefined ? unit : unitOf(body.pack_unit);
+    if (!compatible(packUnit, unit)) throw bad('La unidad del paquete no es compatible con la del artículo.');
+    packSize = toMilli(num(body.pack_size, 'tamaño del paquete'), packUnit);
+  } else if (body.pack_size === null || body.pack_size === '') {
+    packSize = 0;
+  }
+  const packLabel = body.pack_label === undefined ? (current?.pack_label ?? '') : optStr(body.pack_label, 'nombre del paquete', 30);
+  const sortOrder = body.sort_order === undefined ? (current?.sort_order ?? 0) : Math.round(num(body.sort_order, 'orden', { max: 100_000 }));
+  return { location, kind, packSize, packLabel: packSize > 0 ? packLabel || 'paquete' : '', sortOrder };
 }
 
 export function getItem(db: DB, id: number): Item {
@@ -73,6 +109,7 @@ export function createItem(db: DB, user: User, body: Record<string, unknown>, op
   const unit = unitOf(body.unit);
   const qty = num(body.qty ?? 0, 'cantidad inicial');
   const min = num(body.min ?? 0, 'cantidad mínima');
+  const k = kitchenFields(body, unit);
   const exists = db.prepare('SELECT 1 FROM items WHERE name = ? COLLATE NOCASE AND active = 1').get(name);
   if (exists) throw conflict(`Ya existe un artículo activo llamado "${name}".`);
   const demo = isDemoMode(db) ? 1 : 0;
@@ -80,8 +117,11 @@ export function createItem(db: DB, user: User, body: Record<string, unknown>, op
 
   return tx(db, () => {
     const r = db
-      .prepare('INSERT INTO items(name, category, base_unit, unit, qty_m, min_m, is_demo, created_at, updated_at) VALUES (?,?,?,?,0,?,?,?,?)')
-      .run(name, category, baseOf(unit), unit, toMilli(min, unit), demo, at, at);
+      .prepare(
+        `INSERT INTO items(name, category, base_unit, unit, qty_m, min_m, kind, location, pack_size_m, pack_label, sort_order, is_demo, created_at, updated_at)
+         VALUES (?,?,?,?,0,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(name, category, baseOf(unit), unit, toMilli(min, unit), k.kind, k.location, k.packSize, k.packLabel, k.sortOrder, demo, at, at);
     const id = Number(r.lastInsertRowid);
     const qm = toMilli(qty, unit);
     if (qm > 0) applyMovement(db, { itemId: id, delta: qm, type: 'inicial', reason: 'Existencia inicial', userId: user.id, at });
@@ -98,9 +138,12 @@ export function updateItem(db: DB, id: number, body: Record<string, unknown>): I
     throw bad(`No se puede cambiar de ${item.unit} a ${unit}: son unidades incompatibles.`);
   }
   const min = body.min === undefined ? item.min_m : toMilli(num(body.min, 'cantidad mínima'), unit);
+  const k = kitchenFields(body, unit, item);
   const dup = db.prepare('SELECT 1 FROM items WHERE name = ? COLLATE NOCASE AND active = 1 AND id <> ?').get(name, id);
   if (dup) throw conflict(`Ya existe un artículo activo llamado "${name}".`);
-  db.prepare('UPDATE items SET name=?, category=?, unit=?, min_m=?, updated_at=? WHERE id=?').run(name, category, unit, min, nowIso(), id);
+  db.prepare(
+    'UPDATE items SET name=?, category=?, unit=?, min_m=?, kind=?, location=?, pack_size_m=?, pack_label=?, sort_order=?, updated_at=? WHERE id=?',
+  ).run(name, category, unit, min, k.kind, k.location, k.packSize, k.packLabel, k.sortOrder, nowIso(), id);
   return getItem(db, id);
 }
 
@@ -112,6 +155,15 @@ export function setItemActive(db: DB, id: number, active: boolean): Item {
       .all(id) as { name: string }[];
     if (used.length) {
       throw conflict(`No se puede desactivar: se usa en la receta de ${used.map((u) => u.name).join(', ')}. Quítalo de esas recetas primero.`);
+    }
+    const preps = db
+      .prepare(
+        `SELECT DISTINCT p.name FROM preparations p LEFT JOIN preparation_inputs pi ON pi.preparation_id = p.id
+         WHERE p.active = 1 AND (pi.item_id = ? OR p.output_item_id = ?)`,
+      )
+      .all(id, id) as { name: string }[];
+    if (preps.length) {
+      throw conflict(`No se puede desactivar: se usa en la preparación ${preps.map((u) => u.name).join(', ')}. Desactiva esa preparación primero.`);
     }
   }
   db.prepare('UPDATE items SET active=?, updated_at=? WHERE id=?').run(active ? 1 : 0, nowIso(), id);
@@ -127,7 +179,10 @@ export function registerEntry(db: DB, user: User, id: number, body: Record<strin
   const qty = num(body.qty, 'cantidad', { allowZero: false });
   const reason = str(body.reason ?? 'Entrada de mercancía', 'motivo', { max: 200 });
   return tx(db, () => {
-    applyMovement(db, { itemId: id, delta: toMilli(qty, unit), type: 'entrada', reason, userId: user.id, at: opts.at });
+    const at = opts.at ?? nowIso();
+    applyMovement(db, { itemId: id, delta: toMilli(qty, unit), type: 'entrada', reason, userId: user.id, at });
+    // Lo que llegó cierra los faltantes reportados de ese artículo.
+    db.prepare("UPDATE shortages SET status='recibido', closed_by=?, updated_at=? WHERE item_id=? AND status IN ('abierto','pedido')").run(user.id, at, id);
     return getItem(db, id);
   });
 }
@@ -178,7 +233,7 @@ export function listMovements(db: DB, q: { itemId?: number; type?: string; limit
   }
   if (q.type) {
     where.push('m.type = ?');
-    params.push(oneOf(q.type, 'tipo', ['inicial', 'entrada', 'ajuste', 'venta', 'anulacion'] as const));
+    params.push(oneOf(q.type, 'tipo', MOVEMENT_TYPES));
   }
   const limit = Math.min(Math.max(q.limit ?? 200, 1), 1000);
   params.push(limit);

@@ -1,7 +1,17 @@
 import type { BaseUnit, StockStatus, Unit } from '../../shared/units.ts';
+import type { Role, ExtraPerm } from '../../shared/permissions.ts';
+import type {
+  CountStatus,
+  ItemKind,
+  Location,
+  PrepMode,
+  ShortageLevel,
+  ShortageStatus,
+  WasteReason,
+  WasteStatus,
+} from '../../shared/kitchen.ts';
 
-export type Role = 'admin' | 'empleado';
-export type ExtraPerm = 'entradas' | 'reportes' | 'historial_completo';
+export type { Role, ExtraPerm };
 
 export interface User {
   id: number;
@@ -23,8 +33,20 @@ export interface Session {
   today: string;
 }
 
-export const ITEM_CATEGORIES = ['Ingredientes', 'Bebidas', 'Empaques', 'Productos preparados', 'Otros'] as const;
-export const PRODUCT_CATEGORIES = ['Pizzas', 'Bebidas', 'Entradas', 'Postres', 'Otros'] as const;
+export const ITEM_CATEGORIES = [
+  'Carnes y embutidos',
+  'Lácteos',
+  'Verduras y frutas',
+  'Salsas y aderezos',
+  'Masas y panes',
+  'Abarrotes',
+  'Ingredientes',
+  'Productos preparados',
+  'Bebidas',
+  'Empaques',
+  'Otros',
+] as const;
+export const PRODUCT_CATEGORIES = ['Pizzas', 'Hamburguesas', 'Perros', 'Salchipapas', 'Picadas', 'Pollo', 'Bebidas', 'Entradas', 'Postres', 'Otros'] as const;
 
 export interface Item {
   id: number;
@@ -35,13 +57,18 @@ export interface Item {
   qty_m: number;
   min_m: number;
   status: StockStatus;
+  kind: ItemKind;
+  location: Location;
+  pack_size_m: number;
+  pack_label: string;
+  sort_order: number;
   active: boolean;
   is_demo: boolean;
   created_at: string;
   updated_at: string;
 }
 
-export type MovementType = 'inicial' | 'entrada' | 'ajuste' | 'venta' | 'anulacion';
+export type MovementType = 'inicial' | 'entrada' | 'ajuste' | 'venta' | 'anulacion' | 'produccion' | 'baja' | 'conteo';
 
 export interface Movement {
   id: number;
@@ -153,6 +180,16 @@ export interface Dashboard {
   recent: { id: string; created_at: string; total_units: number; status: string; is_demo: number; user_name: string; items: { product_name: string; qty: number }[] }[];
   alerts: Alert[];
   hasSales: boolean;
+  kitchen: KitchenSummary;
+}
+
+export interface KitchenSummary {
+  pendingWastes: number;
+  openShortages: number;
+  pendingCounts: number;
+  tasksToday: { total: number; done: number };
+  productionsWeek: number;
+  lowYield: { id: number; preparation_name: string; efficiency_pct: number | null; local_date: string; user_name: string }[];
 }
 
 export interface ProductUnits {
@@ -192,4 +229,199 @@ export interface DemoStatus {
   demoMode: boolean;
   real: { items: number; products: number; sales: number };
   demo: { items: number; products: number; sales: number };
+}
+
+// ---------- Cocina ----------
+
+export interface PrepInput {
+  item_id: number;
+  item_name: string;
+  base_unit: BaseUnit;
+  item_unit: Unit;
+  unit: Unit;
+  qty_m: number;
+  available_m: number;
+}
+
+export interface Preparation {
+  id: number;
+  name: string;
+  mode: PrepMode;
+  output_item_id: number;
+  output_name: string;
+  output_unit: Unit;
+  output_base: BaseUnit;
+  output_available_m: number;
+  std_output_m: number;
+  std_yield_pct: number | null;
+  instructions: string;
+  active: boolean;
+  is_demo: boolean;
+  inputs: PrepInput[];
+  last_production_at: string | null;
+}
+
+export interface Production {
+  id: number;
+  preparation_id: number;
+  preparation_name: string;
+  mode: PrepMode;
+  output_item_id: number;
+  output_name: string;
+  output_unit: Unit;
+  output_m: number;
+  expected_m: number;
+  merma_util_m: number;
+  merma_inutil_m: number;
+  yield_pct: number | null;
+  efficiency_pct: number | null;
+  low: boolean;
+  note: string;
+  status: 'activa' | 'anulada';
+  user_id: number;
+  user_name: string;
+  created_at: string;
+  local_date: string;
+  annul_reason: string | null;
+  is_demo: number;
+  inputs: { item_id: number; item_name: string; unit: Unit; base_unit: BaseUnit; qty_m: number }[];
+}
+
+export interface Waste {
+  id: number;
+  item_id: number;
+  item_name: string;
+  item_unit: Unit;
+  base_unit: BaseUnit;
+  item_qty_m: number;
+  qty_m: number;
+  unit: Unit;
+  reason: WasteReason;
+  note: string;
+  has_photo: boolean;
+  status: WasteStatus;
+  reported_by: number;
+  reported_by_name: string;
+  reported_at: string;
+  local_date: string;
+  reviewed_by_name: string | null;
+  reviewed_at: string | null;
+  review_note: string;
+  is_demo: number;
+}
+
+export interface Shortage {
+  id: number;
+  item_id: number;
+  item_name: string;
+  item_unit: Unit;
+  base_unit: BaseUnit;
+  location: Location;
+  qty_m: number;
+  min_m: number;
+  level: ShortageLevel;
+  note: string;
+  status: ShortageStatus;
+  reported_by_name: string;
+  created_at: string;
+  updated_at: string;
+  is_demo: number;
+}
+
+export interface ShoppingLine {
+  item_id: number;
+  name: string;
+  location: Location;
+  category: string;
+  unit: Unit;
+  base_unit: BaseUnit;
+  qty_m: number;
+  min_m: number;
+  status: StockStatus;
+  suggested_m: number;
+  shortage: { id: number; level: ShortageLevel; status: ShortageStatus; note: string; reported_by_name: string; created_at: string } | null;
+}
+
+export interface CountSheetLine {
+  item_id: number;
+  name: string;
+  unit: Unit;
+  base_unit: BaseUnit;
+  qty_m: number;
+  pack_size_m: number;
+  pack_label: string;
+  kind: ItemKind;
+}
+
+export interface CountSheet {
+  location: Location;
+  lines: CountSheetLine[];
+}
+
+export interface CountLine {
+  item_id: number;
+  item_name: string;
+  unit: Unit;
+  base_unit: BaseUnit;
+  expected_m: number;
+  counted_m: number;
+  diff_m: number;
+}
+
+export interface Count {
+  id: number;
+  location: Location;
+  status: CountStatus;
+  note: string;
+  counted_by: number;
+  counted_by_name: string;
+  counted_at: string;
+  local_date: string;
+  reviewed_by_name: string | null;
+  reviewed_at: string | null;
+  is_demo: number;
+  lines_count: number;
+  diff_count: number;
+  lines?: CountLine[];
+}
+
+export interface PrepTask {
+  id: number;
+  local_date: string;
+  preparation_id: number;
+  preparation_name: string;
+  output_unit: Unit;
+  target_m: number | null;
+  note: string;
+  production_id: number | null;
+  done_by_name: string | null;
+  done_at: string | null;
+  done_output_m: number | null;
+  is_demo: number;
+}
+
+export interface WeekPlan {
+  from: string;
+  to: string;
+  tasks: PrepTask[];
+}
+
+export interface KitchenToday {
+  today: string;
+  tasks: PrepTask[];
+  productions: Production[];
+  wastes: Waste[];
+  shortages: Shortage[];
+  counts: Count[];
+}
+
+export interface KitchenReport {
+  period: 'dia' | 'semana' | 'mes';
+  range: Range;
+  productions: { preparation_id: number; name: string; unit: Unit; count: number; output_m: number; expected_m: number; merma_m: number; low: number }[];
+  productionsCount: number;
+  wastes: { item_id: number; name: string; unit: Unit; base_unit: BaseUnit; reason: WasteReason; count: number; qty_m: number }[];
+  wastesCount: number;
+  entries: { item_id: number; name: string; unit: Unit; base_unit: BaseUnit; count: number; total_m: number }[];
+  countDiffs: { item_id: number; name: string; unit: Unit; base_unit: BaseUnit; count: number; diff_m: number }[];
 }

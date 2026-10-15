@@ -13,6 +13,7 @@ import {
   weekStart,
 } from '../../shared/dates.ts';
 import { stockStatus, type BaseUnit, type Unit } from '../../shared/units.ts';
+import { listProductions } from './preparations.ts';
 
 export interface Range {
   from: string;
@@ -96,7 +97,80 @@ export function dashboard(db: DB, today = localDate()) {
     recent: recent.map((s) => ({ ...s, items: itemsStmt.all(s.id) })),
     alerts: alerts(db),
     hasSales: !!db.prepare("SELECT 1 FROM sales WHERE status='confirmada' LIMIT 1").get(),
+    kitchen: kitchenSummary(db, today),
   };
+}
+
+/** Lo que el administrador debe atender de la cocina. */
+export function kitchenSummary(db: DB, today = localDate()) {
+  const n = (sql: string, ...p: string[]) => (db.prepare(sql).get(...p) as { n: number }).n;
+  const week = { from: weekStart(today), to: today };
+  const lowYield = listProductions(db, { from: addDays(today, -6), to: today, limit: 200 })
+    .filter((p) => p.status === 'activa' && p.low)
+    .slice(0, 5)
+    .map((p) => ({ id: p.id, preparation_name: p.preparation_name, efficiency_pct: p.efficiency_pct, local_date: p.local_date, user_name: p.user_name }));
+  return {
+    pendingWastes: n("SELECT COUNT(*) n FROM wastes WHERE status = 'pendiente'"),
+    openShortages: n("SELECT COUNT(*) n FROM shortages WHERE status IN ('abierto','pedido')"),
+    pendingCounts: n("SELECT COUNT(*) n FROM counts WHERE status = 'pendiente'"),
+    tasksToday: {
+      total: n('SELECT COUNT(*) n FROM prep_tasks WHERE local_date = ?', today),
+      done: n('SELECT COUNT(*) n FROM prep_tasks WHERE local_date = ? AND production_id IS NOT NULL', today),
+    },
+    productionsWeek: n("SELECT COUNT(*) n FROM productions WHERE status = 'activa' AND local_date BETWEEN ? AND ?", week.from, week.to),
+    lowYield,
+  };
+}
+
+/** Sección «Cocina» del reporte: preparaciones, mermas, bajas, entradas y diferencias de conteo. */
+export function kitchenReport(db: DB, period: string, date: string) {
+  const { range } = periodRange(period, date);
+  const productions = listProductions(db, { from: range.from, to: range.to, limit: 500 }).filter((p) => p.status === 'activa');
+  const byPrep = new Map<number, { preparation_id: number; name: string; unit: Unit; count: number; output_m: number; expected_m: number; merma_m: number; low: number }>();
+  for (const p of productions) {
+    const g = byPrep.get(p.preparation_id) ?? { preparation_id: p.preparation_id, name: p.preparation_name, unit: p.output_unit, count: 0, output_m: 0, expected_m: 0, merma_m: 0, low: 0 };
+    g.count++;
+    g.output_m += p.output_m;
+    g.expected_m += p.expected_m;
+    g.merma_m += p.merma_inutil_m;
+    if (p.low) g.low++;
+    byPrep.set(p.preparation_id, g);
+  }
+  const wastes = db
+    .prepare(
+      `SELECT w.item_id, i.name, i.unit, i.base_unit, w.reason, COUNT(*) count, SUM(w.qty_m) qty_m FROM wastes w JOIN items i ON i.id = w.item_id
+       WHERE w.status = 'aprobada' AND w.local_date BETWEEN ? AND ? GROUP BY w.item_id, w.reason ORDER BY qty_m DESC`,
+    )
+    .all(range.from, range.to) as { item_id: number; name: string; unit: Unit; base_unit: BaseUnit; reason: string; count: number; qty_m: number }[];
+  // Entradas de mercancía por artículo. created_at es UTC: se compara con el rango en hora de Colombia.
+  const entries = db
+    .prepare(
+      `SELECT m.item_id, i.name, i.unit, i.base_unit, COUNT(*) count, SUM(m.delta_m) total_m FROM movements m JOIN items i ON i.id = m.item_id
+       WHERE m.type = 'entrada' AND m.created_at >= ? AND m.created_at < ? GROUP BY m.item_id ORDER BY i.name COLLATE NOCASE`,
+    )
+    .all(bogotaStart(range.from), bogotaStart(addDays(range.to, 1))) as { item_id: number; name: string; unit: Unit; base_unit: BaseUnit; count: number; total_m: number }[];
+  const countDiffs = db
+    .prepare(
+      `SELECT l.item_id, i.name, i.unit, i.base_unit, COUNT(*) count, SUM(l.counted_m - l.expected_m) diff_m FROM count_lines l
+       JOIN counts c ON c.id = l.count_id JOIN items i ON i.id = l.item_id
+       WHERE c.status = 'aplicado' AND c.local_date BETWEEN ? AND ? AND l.counted_m <> l.expected_m
+       GROUP BY l.item_id ORDER BY ABS(SUM(l.counted_m - l.expected_m)) DESC`,
+    )
+    .all(range.from, range.to) as { item_id: number; name: string; unit: Unit; base_unit: BaseUnit; count: number; diff_m: number }[];
+  return {
+    period,
+    range,
+    productions: [...byPrep.values()].sort((a, b) => b.count - a.count),
+    productionsCount: productions.length,
+    wastes,
+    wastesCount: wastes.reduce((s, w) => s + w.count, 0),
+    entries,
+    countDiffs,
+  };
+}
+
+function bogotaStart(ymd: string): string {
+  return new Date(`${ymd}T00:00:00-05:00`).toISOString();
 }
 
 /** Rango para los gráficos del tablero. */
@@ -120,23 +194,22 @@ export function chartRange(kind: string, today = localDate()): Range {
  * Reporte diario, semanal (lunes a domingo) o mensual que contiene la fecha dada,
  * con su comparación contra el período anterior equivalente.
  */
-export function periodReport(db: DB, period: string, date: string) {
+function periodRange(period: string, date: string): { range: Range; prev: Range } {
   if (!isYmd(date)) throw bad('Fecha no válida.');
-  let range: Range;
-  let prev: Range;
-  if (period === 'dia') {
-    range = { from: date, to: date };
-    prev = { from: addDays(date, -1), to: addDays(date, -1) };
-  } else if (period === 'semana') {
-    range = { from: weekStart(date), to: weekEnd(date) };
-    prev = { from: addDays(range.from, -7), to: addDays(range.to, -7) };
-  } else if (period === 'mes') {
-    range = { from: monthStart(date), to: monthEnd(date) };
-    const pm = prevMonthStart(date);
-    prev = { from: pm, to: monthEnd(pm) };
-  } else {
-    throw bad('Período no válido.');
+  if (period === 'dia') return { range: { from: date, to: date }, prev: { from: addDays(date, -1), to: addDays(date, -1) } };
+  if (period === 'semana') {
+    const range = { from: weekStart(date), to: weekEnd(date) };
+    return { range, prev: { from: addDays(range.from, -7), to: addDays(range.to, -7) } };
   }
+  if (period === 'mes') {
+    const pm = prevMonthStart(date);
+    return { range: { from: monthStart(date), to: monthEnd(date) }, prev: { from: pm, to: monthEnd(pm) } };
+  }
+  throw bad('Período no válido.');
+}
+
+export function periodReport(db: DB, period: string, date: string) {
+  const { range, prev } = periodRange(period, date);
 
   const total = unitsIn(db, range);
   const prevTotal = unitsIn(db, prev);

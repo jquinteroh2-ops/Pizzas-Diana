@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { ChevronLeft, ChevronRight, Download, TrendingUp, TrendingDown, Minus, ShoppingBag, ChefHat, BarChart3, ReceiptText, Ban } from 'lucide-react';
 import { useApi, useApp } from '../lib/app';
-import type { PeriodReport } from '../lib/types';
+import type { KitchenReport, PeriodReport } from '../lib/types';
 import { PageHeader, Loading, ErrorBox, EmptyState, Segmented, cx } from '../components/ui';
 import { UnitsColumns, TopProductsBars } from '../components/charts';
 import { addDays, longDate, monthName, prevMonthStart, shortDate, shortDateDow, monthEnd } from '../../shared/dates.ts';
-import { formatNumber, formatQty, fromMilli, niceUnit, UNIT_SHORT } from '../../shared/units.ts';
+import { baseOf, formatNumber, formatQty, fromMilli, niceUnit, UNIT_SHORT } from '../../shared/units.ts';
+import { WASTE_REASON_LABELS } from '../../shared/kitchen.ts';
 
 type Period = 'dia' | 'semana' | 'mes';
 
@@ -231,8 +232,132 @@ export default function Reports() {
               </div>
             </>
           )}
+          <KitchenSection period={period} date={date} />
         </>
       )}
     </>
+  );
+}
+
+/** Sección «Cocina»: lo que se preparó y cómo rindió, lo que se botó y lo que entró. */
+function KitchenSection({ period, date }: { period: Period; date: string }) {
+  const k = useApi<KitchenReport>(`/reports/kitchen?period=${period}&date=${date}`, [period, date]);
+  if (k.error) return <ErrorBox message={k.error} onRetry={k.reload} />;
+  if (!k.data) return <Loading />;
+  const d = k.data;
+  const nothing = d.productionsCount + d.wastesCount + d.entries.length + d.countDiffs.length === 0;
+  return (
+    <section className="mt-10">
+      <h2 className="flex items-center gap-2 font-display text-2xl font-semibold text-ink-900">
+        <ChefHat className="size-6 text-brand-600" /> Cocina
+      </h2>
+      <p className="mb-4 text-sm text-ink-500">Preparaciones, mermas, bajas, entradas de mercancía y diferencias de conteo del mismo período.</p>
+      {nothing ? (
+        <div className="card">
+          <EmptyState icon={ChefHat} title="Sin movimiento de cocina" text="No hubo preparaciones, bajas, entradas ni conteos en este período." />
+        </div>
+      ) : (
+        <div className="grid gap-6 lg:grid-cols-2">
+          <section className="card p-5 sm:p-6">
+            <h3 className="mb-1 font-display text-lg font-semibold">Preparaciones y rendimiento</h3>
+            <p className="mb-3 text-xs text-ink-500">Rendimiento = lo que salió frente a lo que debía salir según la receta estándar.</p>
+            {d.productions.length === 0 ? (
+              <p className="py-4 text-sm text-ink-500">No se registraron preparaciones.</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-cream-200 text-xs text-ink-500 uppercase">
+                    <th className="py-2 text-left font-semibold">Preparación</th>
+                    <th className="py-2 text-right font-semibold">Veces</th>
+                    <th className="py-2 text-right font-semibold">Salió</th>
+                    <th className="py-2 text-right font-semibold">Rend.</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-cream-200">
+                  {d.productions.map((p) => {
+                    const eff = p.expected_m ? Math.round((p.output_m / p.expected_m) * 1000) / 10 : null;
+                    return (
+                      <tr key={p.preparation_id}>
+                        <td className="py-2 font-medium">
+                          {p.name}
+                          {p.merma_m > 0 && <span className="block text-xs text-ink-500">merma {formatQty(p.merma_m, niceUnit(p.merma_m, baseOf(p.unit)))}</span>}
+                        </td>
+                        <td className="py-2 text-right tabular-nums">{p.count}</td>
+                        <td className="py-2 text-right tabular-nums">{formatQty(p.output_m, niceUnit(p.output_m, baseOf(p.unit)))}</td>
+                        <td className={cx('py-2 text-right font-semibold tabular-nums', eff !== null && eff < 90 ? 'text-brand-700' : 'text-emerald-700')}>{eff === null ? '—' : `${formatNumber(eff)} %`}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </section>
+
+          <section className="card p-5 sm:p-6">
+            <h3 className="mb-1 font-display text-lg font-semibold">Bajas aprobadas</h3>
+            <p className="mb-3 text-xs text-ink-500">Lo que se botó, por producto y motivo.</p>
+            {d.wastes.length === 0 ? (
+              <p className="py-4 text-sm text-ink-500">No hubo bajas.</p>
+            ) : (
+              <ul className="divide-y divide-cream-200">
+                {d.wastes.map((w) => (
+                  <li key={`${w.item_id}-${w.reason}`} className="flex items-center justify-between gap-3 py-2.5 text-sm">
+                    <span>
+                      <span className="font-medium text-ink-900">{w.name}</span>
+                      <span className="block text-xs text-ink-500">
+                        {WASTE_REASON_LABELS[w.reason]} · {w.count} {w.count === 1 ? 'vez' : 'veces'}
+                      </span>
+                    </span>
+                    <span className="font-semibold text-brand-700 tabular-nums">−{formatQty(w.qty_m, niceUnit(w.qty_m, w.base_unit))}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className="card p-5 sm:p-6">
+            <h3 className="mb-1 font-display text-lg font-semibold">Entradas de mercancía</h3>
+            <p className="mb-3 text-xs text-ink-500">Todo lo que ingresó al inventario.</p>
+            {d.entries.length === 0 ? (
+              <p className="py-4 text-sm text-ink-500">No entró mercancía.</p>
+            ) : (
+              <ul className="divide-y divide-cream-200">
+                {d.entries.map((e) => (
+                  <li key={e.item_id} className="flex items-center justify-between gap-3 py-2.5 text-sm">
+                    <span>
+                      <span className="font-medium text-ink-900">{e.name}</span>
+                      <span className="block text-xs text-ink-500">
+                        {e.count} {e.count === 1 ? 'entrada' : 'entradas'}
+                      </span>
+                    </span>
+                    <span className="font-semibold text-emerald-700 tabular-nums">+{formatQty(e.total_m, niceUnit(e.total_m, e.base_unit))}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className="card p-5 sm:p-6">
+            <h3 className="mb-1 font-display text-lg font-semibold">Diferencias de conteo</h3>
+            <p className="mb-3 text-xs text-ink-500">Lo que no cuadró entre el sistema y lo que se contó en las neveras.</p>
+            {d.countDiffs.length === 0 ? (
+              <p className="py-4 text-sm text-ink-500">Los conteos cuadraron (o no hubo conteos aplicados).</p>
+            ) : (
+              <ul className="divide-y divide-cream-200">
+                {d.countDiffs.map((c) => (
+                  <li key={c.item_id} className="flex items-center justify-between gap-3 py-2.5 text-sm">
+                    <span className="font-medium text-ink-900">{c.name}</span>
+                    <span className={cx('font-semibold tabular-nums', c.diff_m < 0 ? 'text-brand-700' : 'text-emerald-700')}>
+                      {c.diff_m > 0 ? '+' : '−'}
+                      {formatQty(Math.abs(c.diff_m), niceUnit(Math.abs(c.diff_m), c.base_unit))}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
+      )}
+    </section>
   );
 }

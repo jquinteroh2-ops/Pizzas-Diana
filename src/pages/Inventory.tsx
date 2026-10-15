@@ -32,8 +32,9 @@ import {
   Pagination,
   cx,
 } from '../components/ui';
-import { UNIT_LABELS, UNIT_SHORT, formatQty, fromMilli, unitsFor, type Unit, type StockStatus } from '../../shared/units.ts';
+import { UNIT_LABELS, UNIT_SHORT, formatQty, fromMilli, toMilli, unitsFor, type Unit, type StockStatus } from '../../shared/units.ts';
 import { formatDateTime } from '../../shared/dates.ts';
+import { ITEM_KINDS, KIND_LABELS, LOCATIONS, formatPacks, type ItemKind, type Location } from '../../shared/kitchen.ts';
 
 const PAGE = 12;
 
@@ -45,6 +46,9 @@ const MOV_LABEL: Record<MovementType, { label: string; tone: 'green' | 'red' | '
   ajuste: { label: 'Ajuste', tone: 'amber' },
   venta: { label: 'Venta', tone: 'red' },
   anulacion: { label: 'Anulación', tone: 'dark' },
+  produccion: { label: 'Preparación', tone: 'neutral' },
+  baja: { label: 'Baja', tone: 'red' },
+  conteo: { label: 'Conteo', tone: 'amber' },
 };
 
 function StockBar({ item }: { item: Item }) {
@@ -67,6 +71,7 @@ export default function Inventory() {
   const [tab, setTab] = useState<'stock' | 'movs'>('stock');
   const [q, setQ] = useState('');
   const [cat, setCat] = useState('');
+  const [loc, setLoc] = useState<Location | ''>('');
   const routeStatus = (route.params.get('estado') as StockStatus | null) ?? '';
   const [status, setStatus] = useState<StockStatus | ''>(routeStatus);
   const [prevRouteStatus, setPrevRouteStatus] = useState(routeStatus);
@@ -78,7 +83,7 @@ export default function Inventory() {
   const [showInactive, setShowInactive] = useState(false);
   const [sort, setSort] = useState<Sort>('nombre');
   const [page, setPage] = useState(1);
-  const filterKey = `${q}|${cat}|${status}|${showInactive}|${sort}`;
+  const filterKey = `${q}|${cat}|${loc}|${status}|${showInactive}|${sort}`;
   const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
   if (filterKey !== prevFilterKey) {
     setPrevFilterKey(filterKey);
@@ -98,6 +103,7 @@ export default function Inventory() {
     const list = (items.data ?? []).filter((i) => {
       if (!showInactive && !i.active) return false;
       if (cat && i.category !== cat) return false;
+      if (loc && i.location !== loc) return false;
       if (status && (i.status !== status || !i.active)) return false;
       if (q && !i.name.toLowerCase().includes(q.trim().toLowerCase())) return false;
       return true;
@@ -109,7 +115,7 @@ export default function Inventory() {
       'cantidad-desc': (a: Item, b: Item) => b.qty_m - a.qty_m,
     }[sort];
     return list.sort(by);
-  }, [items.data, q, cat, status, showInactive, sort]);
+  }, [items.data, q, cat, loc, status, showInactive, sort]);
 
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE));
   const visible = filtered.slice((page - 1) * PAGE, page * PAGE);
@@ -152,7 +158,7 @@ export default function Inventory() {
     <>
       <PageHeader
         title="Inventario"
-        subtitle="Ingredientes, bebidas y empaques. Cada cambio queda registrado como un movimiento."
+        subtitle="Insumos y preparaciones por nevera. Cada cambio queda registrado como un movimiento."
         actions={
           can('inventory.edit') && (
             <button className="btn-primary" onClick={() => setForm({})}>
@@ -181,11 +187,17 @@ export default function Inventory() {
         <Loading />
       ) : (
         <div className="card overflow-hidden">
-          <div className="grid gap-3 border-b border-cream-200 p-4 sm:grid-cols-2 lg:grid-cols-[1fr_auto_auto_auto]">
+          <div className="grid gap-3 border-b border-cream-200 p-4 sm:grid-cols-2 lg:grid-cols-[1fr_auto_auto_auto_auto]">
             <div className="relative">
               <Search className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-ink-400" />
               <input className="input pl-10" placeholder="Buscar por nombre…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Buscar" />
             </div>
+            <select className="input lg:w-44" value={loc} onChange={(e) => setLoc(e.target.value as Location | '')} aria-label="Ubicación">
+              <option value="">Todas las ubicaciones</option>
+              {LOCATIONS.map((l) => (
+                <option key={l}>{l}</option>
+              ))}
+            </select>
             <select className="input lg:w-48" value={cat} onChange={(e) => setCat(e.target.value)} aria-label="Categoría">
               <option value="">Todas las categorías</option>
               {ITEM_CATEGORIES.map((c) => (
@@ -236,7 +248,7 @@ export default function Inventory() {
                   <thead className="bg-cream-50">
                     <tr>
                       <th className="th-cell">Artículo</th>
-                      <th className="th-cell">Categoría</th>
+                      <th className="th-cell">Ubicación</th>
                       <th className="th-cell">Disponible</th>
                       <th className="th-cell">Mínimo</th>
                       <th className="th-cell">Estado</th>
@@ -252,13 +264,18 @@ export default function Inventory() {
                             {i.name}
                           </button>
                           <div className="mt-0.5 flex gap-1">
+                            {i.kind === 'preparacion' && <Badge tone="amber">Preparación</Badge>}
                             {i.is_demo && <DemoTag />}
                             {!i.active && <Badge>Desactivado</Badge>}
                           </div>
                         </td>
-                        <td className="td-cell text-ink-500">{i.category}</td>
+                        <td className="td-cell text-ink-500">
+                          {i.location}
+                          <span className="block text-xs text-ink-400">{i.category}</span>
+                        </td>
                         <td className="td-cell">
                           <span className="font-semibold tabular-nums">{formatQty(i.qty_m, i.unit)}</span>
+                          {i.pack_size_m > 0 && <span className="block text-xs text-ink-500">{formatPacks(i.qty_m, i.pack_size_m, i.pack_label, i.unit)}</span>}
                           <StockBar item={i} />
                         </td>
                         <td className="td-cell text-ink-500 tabular-nums">{formatQty(i.min_m, i.unit)}</td>
@@ -278,7 +295,9 @@ export default function Inventory() {
                       <p className="flex items-center gap-1.5 truncate font-semibold text-ink-900">
                         {i.name} {i.is_demo && <DemoTag />}
                       </p>
-                      <p className="text-xs text-ink-500">{i.category}</p>
+                      <p className="text-xs text-ink-500">
+                        {i.location} · {i.kind === 'preparacion' ? 'preparación' : i.category}
+                      </p>
                       <p className="mt-1 text-sm">
                         <b className="tabular-nums">{formatQty(i.qty_m, i.unit)}</b> <span className="text-xs text-ink-500">· mín. {formatQty(i.min_m, i.unit)}</span>
                       </p>
@@ -374,20 +393,33 @@ function ItemForm({ item, onClose }: { item?: Item; onClose: () => void }) {
   const [unit, setUnit] = useState<Unit>(item?.unit ?? 'kg');
   const [qty, setQty] = useState('');
   const [min, setMin] = useState(item ? String(fromMilli(item.min_m, item.unit)) : '');
+  const [location, setLocation] = useState<Location>(item?.location ?? 'Nevera Coca-Cola');
+  const [kind, setKind] = useState<ItemKind>(item?.kind ?? 'insumo');
+  const packUnitOf = (u: Unit): Unit => (u === 'kg' ? 'g' : u === 'l' ? 'ml' : u);
+  const [packSize, setPackSize] = useState(item && item.pack_size_m > 0 ? String(fromMilli(item.pack_size_m, packUnitOf(item.unit))) : '');
+  const [packLabel, setPackLabel] = useState(item?.pack_label || 'paquete');
   const [busy, setBusy] = useState(false);
 
   // Al editar solo se puede cambiar a una unidad compatible (kg ↔ g, l ↔ ml).
   const unitOptions: Unit[] = item ? unitsFor(item.base_unit) : ['g', 'kg', 'ml', 'l', 'unidad'];
+  const packUnit = packUnitOf(unit);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
+    const kitchen = {
+      location,
+      kind,
+      pack_size: packSize ? Number(numInput(packSize)) : null,
+      pack_unit: packUnit,
+      pack_label: packLabel,
+    };
     try {
       if (item) {
-        await api.put(`/items/${item.id}`, { name, category, unit, min: Number(numInput(min || '0')) });
+        await api.put(`/items/${item.id}`, { name, category, unit, min: Number(numInput(min || '0')), ...kitchen });
         toast.success('Cambios guardados', name);
       } else {
-        await api.post('/items', { name, category, unit, qty: Number(numInput(qty || '0')), min: Number(numInput(min || '0')) });
+        await api.post('/items', { name, category, unit, qty: Number(numInput(qty || '0')), min: Number(numInput(min || '0')), ...kitchen });
         toast.success('Artículo creado', name);
       }
       bump();
@@ -446,12 +478,46 @@ function ItemForm({ item, onClose }: { item?: Item; onClose: () => void }) {
         <Field label={`Mínimo de alerta (${UNIT_SHORT[unit]})`} hint="Avisa cuando la existencia llegue a este valor.">
           <input className="input" inputMode="decimal" value={min} onChange={(e) => setMin(e.target.value)} placeholder="0" pattern="[0-9]+([.,][0-9]+)?" />
         </Field>
+        <Field label="¿Dónde se guarda?" hint="Así se ordena la hoja de conteo.">
+          <select className="input" value={location} onChange={(e) => setLocation(e.target.value as Location)}>
+            {LOCATIONS.map((l) => (
+              <option key={l}>{l}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Tipo">
+          <select className="input" value={kind} onChange={(e) => setKind(e.target.value as ItemKind)}>
+            {ITEM_KINDS.map((k) => (
+              <option key={k} value={k}>
+                {KIND_LABELS[k]}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <div className="sm:col-span-2">
+          <span className="label">Presentación para contar (opcional)</span>
+          <div className="grid grid-cols-[auto_1fr_auto_1fr] items-center gap-2 text-sm">
+            <span className="text-ink-500">1</span>
+            <input className="input" value={packLabel} onChange={(e) => setPackLabel(e.target.value)} maxLength={30} placeholder="paquete" aria-label="Nombre de la presentación" />
+            <span className="text-ink-500">=</span>
+            <div className="flex items-center gap-2">
+              <input className="input tabular-nums" inputMode="decimal" value={packSize} onChange={(e) => setPackSize(e.target.value)} placeholder="Ej. 500" pattern="[0-9]+([.,][0-9]+)?" aria-label="Tamaño" />
+              <span className="font-semibold text-ink-500">{UNIT_SHORT[packUnit]}</span>
+            </div>
+          </div>
+          <p className="mt-1 text-xs text-ink-500">
+            Si viene en paquetes, la cocina cuenta «3 paquetes + 385 g» y el sistema hace la cuenta.
+            {packSize && Number(numInput(packSize)) > 0 && item && (
+              <> Hoy hay {formatPacks(item.qty_m, toMilli(Number(numInput(packSize)), packUnit), packLabel, unit)}.</>
+            )}
+          </p>
+        </div>
       </form>
     </Modal>
   );
 }
 
-function EntryForm({ item, onClose }: { item: Item; onClose: () => void }) {
+export function EntryForm({ item, onClose }: { item: Item; onClose: () => void }) {
   const { bump } = useApp();
   const toast = useToast();
   const [qty, setQty] = useState('');

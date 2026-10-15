@@ -10,6 +10,12 @@ import * as prod from './services/products.ts';
 import * as sales from './services/sales.ts';
 import * as reports from './services/reports.ts';
 import * as demo from './services/demo.ts';
+import * as preps from './services/preparations.ts';
+import * as wastes from './services/wastes.ts';
+import * as shortages from './services/shortages.ts';
+import * as counts from './services/counts.ts';
+import * as plan from './services/plan.ts';
+import * as kitchen from './services/kitchen.ts';
 import { localDate } from '../shared/dates.ts';
 
 const COOKIE = 'pd_session';
@@ -48,7 +54,8 @@ const qStr = (v: unknown) => (typeof v === 'string' && v !== '' ? v : undefined)
 export function createApp(db: DB, opts: { secureCookies?: boolean; staticDir?: string } = {}) {
   const app = express();
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '200kb' }));
+  // 2 MB alcanza para la foto comprimida de una baja.
+  app.use(express.json({ limit: '2mb' }));
 
   // Cabeceras básicas de seguridad.
   app.use((_req, res, next) => {
@@ -181,6 +188,68 @@ export function createApp(db: DB, opts: { secureCookies?: boolean; staticDir?: s
     reports.periodReport(db, qStr(req.query.period) ?? 'dia', qStr(req.query.date) ?? localDate()),
   ));
 
+  app.get('/api/reports/kitchen', need('reports.view'), h((req) =>
+    reports.kitchenReport(db, qStr(req.query.period) ?? 'semana', qStr(req.query.date) ?? localDate()),
+  ));
+
+  // ---------- Cocina ----------
+  app.get('/api/kitchen/today', need('kitchen.report'), h((req) => kitchen.kitchenToday(db, req.user!)));
+  // Para reportar faltantes y bajas hace falta la lista de productos (también la caja, que no ve el inventario).
+  app.get('/api/kitchen/items', need('kitchen.report'), h(() => inv.listItems(db).filter((i) => i.active)));
+
+  // Preparaciones (recetas de la cocina) y lo que se prepara cada día.
+  app.get('/api/preparations', need('kitchen.use'), h(() => preps.listPreparations(db)));
+  app.post('/api/preparations', need('kitchen.manage'), h((req) => preps.createPreparation(db, req.body ?? {})));
+  app.put('/api/preparations/:id', need('kitchen.manage'), h((req) => preps.updatePreparation(db, id(req), req.body ?? {})));
+  app.post('/api/preparations/:id/active', need('kitchen.manage'), h((req) => preps.setPreparationActive(db, id(req), req.body?.active === true)));
+  app.get('/api/productions', need('kitchen.use'), h((req) =>
+    preps.listProductions(db, {
+      from: qStr(req.query.from),
+      to: qStr(req.query.to),
+      preparationId: qNum(req.query.preparationId),
+      // La cocina ve lo suyo; el administrador, todo.
+      userId: users.can(req.user!, 'kitchen.manage') ? qNum(req.query.userId) : req.user!.id,
+      limit: qNum(req.query.limit),
+    }),
+  ));
+  app.post('/api/productions', need('kitchen.use'), h((req, res) => {
+    res.status(201).json(preps.registerProduction(db, req.user!, req.body ?? {}));
+  }));
+  app.post('/api/productions/:id/annul', need('kitchen.manage'), h((req) => preps.annulProduction(db, req.user!, id(req), req.body ?? {})));
+
+  // Bajas: las reporta cualquiera, las autoriza el administrador.
+  app.get('/api/wastes', need('kitchen.report'), h((req) =>
+    wastes.listWastes(db, req.user!, { status: qStr(req.query.status), from: qStr(req.query.from), to: qStr(req.query.to), limit: qNum(req.query.limit) }),
+  ));
+  app.get('/api/wastes/:id/photo', need('kitchen.report'), h((req) => wastes.getWastePhoto(db, req.user!, id(req))));
+  app.post('/api/wastes', need('kitchen.report'), h((req, res) => {
+    res.status(201).json(wastes.reportWaste(db, req.user!, req.body ?? {}));
+  }));
+  app.post('/api/wastes/:id/review', need('kitchen.manage'), h((req) => wastes.reviewWaste(db, req.user!, id(req), req.body ?? {})));
+
+  // Faltantes y lista de compras.
+  app.get('/api/shortages', need('kitchen.report'), h((req) => shortages.listShortages(db, { scope: qStr(req.query.scope), limit: qNum(req.query.limit) })));
+  app.post('/api/shortages', need('kitchen.report'), h((req, res) => {
+    res.status(201).json(shortages.reportShortage(db, req.user!, req.body ?? {}));
+  }));
+  app.post('/api/shortages/:id/status', need('kitchen.manage'), h((req) => shortages.setShortageStatus(db, req.user!, id(req), req.body ?? {})));
+  app.get('/api/shopping-list', need('kitchen.manage'), h(() => shortages.shoppingList(db)));
+
+  // Conteos por ubicación.
+  app.get('/api/counts/sheet', need('kitchen.use'), h((req) => counts.countSheet(db, qStr(req.query.location))));
+  app.get('/api/counts', need('kitchen.use'), h((req) => counts.listCounts(db, req.user!, { status: qStr(req.query.status), limit: qNum(req.query.limit) })));
+  app.get('/api/counts/:id', need('kitchen.use'), h((req) => counts.getCount(db, req.user!, id(req))));
+  app.post('/api/counts', need('kitchen.use'), h((req, res) => {
+    res.status(201).json(counts.submitCount(db, req.user!, req.body ?? {}));
+  }));
+  app.post('/api/counts/:id/review', need('kitchen.manage'), h((req) => counts.reviewCount(db, req.user!, id(req), req.body ?? {})));
+
+  // Plan de preparación semanal.
+  app.get('/api/prep-plan', need('kitchen.use'), h((req) => plan.weekPlan(db, qStr(req.query.date))));
+  app.post('/api/prep-plan', need('kitchen.manage'), h((req) => plan.addTask(db, req.user!, req.body ?? {})));
+  app.post('/api/prep-plan/copy-previous', need('kitchen.manage'), h((req) => plan.copyPreviousWeek(db, req.user!, req.body?.date)));
+  app.post('/api/prep-plan/:id/delete', need('kitchen.manage'), h((req) => plan.deleteTask(db, id(req))));
+
   // ---------- Usuarios ----------
   app.get('/api/users', h((req) => {
     // Los empleados con historial completo necesitan la lista de nombres para filtrar.
@@ -197,6 +266,7 @@ export function createApp(db: DB, opts: { secureCookies?: boolean; staticDir?: s
   app.post('/api/settings/demo/load', need('settings.manage'), h((req) => demo.loadDemo(db, req.user!)));
   app.post('/api/settings/demo/reset', need('settings.manage'), h((req) => demo.resetDemo(db, req.user!)));
   app.post('/api/settings/demo/clear', need('settings.manage'), h(() => demo.clearDemo(db)));
+  app.post('/api/settings/catalog', need('settings.manage'), h((req) => kitchen.loadCatalog(db, req.user!)));
 
   app.use('/api', (_req, _res, next) => next(new AppError(404, 'Ruta no encontrada.')));
 

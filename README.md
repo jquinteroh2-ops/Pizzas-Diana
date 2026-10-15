@@ -34,7 +34,7 @@ Abre tu navegador en: **`http://localhost:3001`**
 
 ## 🧪 Pruebas y Validación
 
-El proyecto incluye 14 pruebas automatizadas con `node:test` que verifican cada regla de negocio, seguridad y persistencia:
+El proyecto incluye 24 pruebas automatizadas con `node:test` que verifican cada regla de negocio, seguridad y persistencia:
 ```bash
 # Ejecutar suite de pruebas
 npm test
@@ -102,13 +102,25 @@ npm run lint
    - Exportación de datos a formato CSV.
 
 7. **Control de Acceso y Usuarios**:
-   - Roles: **Administrador** y **Empleado**.
-   - Permisos granulares asignables a empleados (ej. autorizar registro de entradas).
+   - Roles: **Administrador** (ve todo), **Caja** (vende y avisa faltantes/bajas) y **Cocina** (prepara, cuenta neveras, avisa faltantes/bajas; no vende ni ve estadísticas).
+   - Permisos adicionales asignables a caja y cocina (entradas de mercancía, reportes, historial completo).
    - Sesiones autenticadas protegidas contra CSRF y fuerza bruta.
 
-8. **Modo Demostración (DEMO)**:
-   - Generación de datos consistentes (15 ingredientes, 7 productos con recetas, histórico de 5 semanas de ventas).
-   - Marcador `is_demo` que permite restablecer o eliminar todos los datos de prueba en 1 clic para iniciar en limpio con los datos reales de Pizza Diana.
+8. **Cocina** (reemplaza los formatos en papel):
+   - **Preparar**: transformaciones con merma (cebolla → cebolla picada o caramelizada) y recetas por lote (masa de pizza escalada según la harina). Calcula rendimiento contra el estándar y alerta si rinde bajo.
+   - **Falta algo**: faltantes reportados por cualquiera, sin duplicados; se juntan con lo que está bajo el mínimo en la **lista de compras** (copiar o enviar por WhatsApp). Al registrar la entrada, el faltante se cierra solo.
+   - **Dar de baja**: con motivo y foto; solo descuenta cuando el administrador la aprueba.
+   - **Contar nevera**: conteo a ciegas por ubicación (congelador, nevera negra, nevera Coca-Cola, bodega), en paquetes + sueltos. El administrador revisa y aplica solo la diferencia.
+   - **Plan de preparación** semanal (cada día algo distinto), con «copiar semana anterior».
+   - Reporte de cocina: rendimiento, bajas por motivo, entradas de mercancía y diferencias de conteo.
+   - **Cargar catálogo Pizza Diana** (Configuración): productos de las hojas por nevera, 8 preparaciones y el menú con recetas sugeridas (revisar cantidades con el dueño).
+
+9. **Modo Demostración (DEMO)**:
+   - Usa el catálogo real de Pizza Diana con 5 semanas de ventas, preparaciones, bajas, conteos y faltantes.
+   - Marcador `is_demo` que permite restablecer o eliminar todos los datos de prueba en 1 clic.
+   - En GitHub Pages no hay servidor: los datos viven en el navegador de cada dispositivo (`src/lib/browserStorage.ts`) y la pantalla de entrada ofrece botones para probar cada rol (clave `demo1234`). Para que cocina, caja y administrador compartan datos hay que publicar el servidor (`npm start`, p. ej. en Railway).
+
+> Las bases creadas con la versión anterior se migran solas al arrancar (PRAGMA `user_version`): el rol «empleado» pasa a «caja» y no se pierde nada.
 
 ---
 
