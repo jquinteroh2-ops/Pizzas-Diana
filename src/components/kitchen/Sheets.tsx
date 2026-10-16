@@ -49,6 +49,16 @@ function Paper({ title, subtitle, nav, actions, note, children }: { title: strin
   );
 }
 
+/** Tabla ancha como la hoja de papel: en el celular se desliza de lado, y se avisa. */
+function Wide({ children }: { children: ReactNode }) {
+  return (
+    <div>
+      <p className="mb-1 text-right text-[11px] font-semibold text-ink-500 md:hidden print:hidden">Desliza la tabla →</p>
+      <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">{children}</div>
+    </div>
+  );
+}
+
 function DayNav({ date, setDate }: { date: string; setDate: (d: string) => void }) {
   const today = localDate();
   return (
@@ -234,7 +244,7 @@ export function InventoryDaySheet() {
                       </div>
                     ))}
                 </div>
-                <div className="overflow-x-auto">
+                <Wide>
                   <table className="w-full min-w-[640px] border-collapse">
                     <thead>
                       <tr>
@@ -300,7 +310,7 @@ export function InventoryDaySheet() {
                       })}
                     </tbody>
                   </table>
-                </div>
+                </Wide>
               </div>
             );
           })}
@@ -379,7 +389,7 @@ export function MermaSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
               ['Rendimiento', (x) => (x.input ? `${formatNumber(Math.round((x.output / x.input) * 1000) / 10)} %` : '')],
             ];
             return (
-              <div key={p.id} className="overflow-x-auto">
+              <Wide key={p.id}>
                 <table className="w-full min-w-[720px] table-fixed border-collapse">
                   <thead>
                     <tr>
@@ -421,7 +431,7 @@ export function MermaSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </Wide>
             );
           })}
           {blocks.length === 0 && <p className="text-sm text-ink-500">No hay preparaciones con merma configuradas.</p>}
@@ -478,7 +488,7 @@ export function MasaSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
             // La UM queda fija por fila (g o ml): en el papel se confundían con «kg».
             const um = (b: BaseUnit) => UNIT_SHORT[smallUnit(b)].toUpperCase();
             return (
-              <div key={p.id} className="overflow-x-auto">
+              <Wide key={p.id}>
                 <table className="w-full min-w-[820px] border-collapse">
                   <thead>
                     <tr>
@@ -549,7 +559,7 @@ export function MasaSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
                   </tbody>
                 </table>
                 {p.instructions && <p className="mt-1 text-[11px] text-ink-500">{p.instructions}</p>}
-              </div>
+              </Wide>
             );
           })}
         </div>
@@ -606,7 +616,7 @@ export function BajasSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
       ) : !wastes.data ? (
         <Loading />
       ) : (
-        <div className="overflow-x-auto">
+        <Wide>
           <table className="w-full min-w-[760px] border-collapse">
             <thead>
               <tr>
@@ -663,7 +673,7 @@ export function BajasSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
               ))}
             </tbody>
           </table>
-        </div>
+        </Wide>
       )}
       {reject && <RejectWaste w={reject} onClose={() => setReject(null)} />}
       {photo && (
@@ -706,7 +716,7 @@ export function VentasSheet() {
       ) : (
         <div className="grid gap-6 lg:grid-cols-2">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[360px] border-collapse">
+            <table className="w-full border-collapse">
               <thead>
                 <tr>
                   <td className={SECTION} colSpan={3}>
@@ -738,7 +748,7 @@ export function VentasSheet() {
             </table>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[360px] border-collapse">
+            <table className="w-full border-collapse">
               <thead>
                 <tr>
                   <td className={SECTION} colSpan={2}>

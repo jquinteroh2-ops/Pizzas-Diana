@@ -138,12 +138,14 @@ export function ActionTile({
   text,
   onClick,
   tone,
+  className,
 }: {
   icon: LucideIcon;
   title: string;
   text: string;
   onClick: () => void;
   tone: 'brand' | 'amber' | 'ink' | 'green';
+  className?: string;
 }) {
   const tones = {
     brand: 'from-brand-600 to-brand-700 text-white shadow-brand-900/25',
@@ -155,14 +157,18 @@ export function ActionTile({
     <button
       type="button"
       onClick={onClick}
-      className={cx('flex min-h-32 flex-col justify-between rounded-3xl bg-gradient-to-br p-4 text-left shadow-lg transition-transform active:scale-[0.97] sm:min-h-36 sm:p-5', tones)}
+      className={cx(
+        'flex min-h-32 min-w-0 flex-col justify-between rounded-3xl bg-gradient-to-br p-3 text-left shadow-lg transition-transform active:scale-[0.97] min-[400px]:p-4 sm:min-h-36 sm:p-5',
+        tones,
+        className,
+      )}
     >
-      <span className="grid size-11 place-items-center rounded-2xl bg-white/20">
+      <span className="grid size-10 place-items-center rounded-2xl bg-white/20 min-[400px]:size-11">
         <Icon className="size-6" />
       </span>
-      <span>
-        <span className="block font-display text-xl leading-tight font-semibold">{title}</span>
-        <span className="mt-0.5 block text-xs opacity-80">{text}</span>
+      <span className="min-w-0">
+        <span className="block font-display text-[1.05rem] leading-tight font-semibold min-[400px]:text-xl">{title}</span>
+        <span className="mt-0.5 block text-[11px] leading-snug opacity-80 min-[400px]:text-xs">{text}</span>
       </span>
     </button>
   );

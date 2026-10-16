@@ -16,11 +16,15 @@ export default function Products() {
   const [busy, setBusy] = useState(false);
   const [q, setQ] = useState('');
   const [showInactive, setShowInactive] = useState(false);
+  const [cat, setCat] = useState('');
 
+  const categories = useMemo(() => [...new Set((products.data ?? []).map((p) => p.category))].sort(), [products.data]);
   const list = useMemo(
     () =>
-      (products.data ?? []).filter((p) => (showInactive || p.active) && (!q || p.name.toLowerCase().includes(q.trim().toLowerCase()))),
-    [products.data, q, showInactive],
+      (products.data ?? []).filter(
+        (p) => (showInactive || p.active) && (!cat || p.category === cat) && (!q || p.name.toLowerCase().includes(q.trim().toLowerCase())),
+      ),
+    [products.data, q, showInactive, cat],
   );
   const incomplete = (products.data ?? []).filter((p) => p.active && p.warnings.length);
 
@@ -71,6 +75,19 @@ export default function Products() {
           Mostrar inactivos
         </label>
       </div>
+      {categories.length > 1 && (
+        <div className="mb-5 flex gap-2 overflow-x-auto pb-1">
+          {['', ...categories].map((c) => (
+            <button
+              key={c || 'todos'}
+              onClick={() => setCat(c)}
+              className={cx('chip shrink-0', cat === c ? 'border-ink-900 bg-ink-900 text-white' : 'border-cream-300 bg-white text-ink-700 hover:border-ink-400')}
+            >
+              {c || 'Todos'}
+            </button>
+          ))}
+        </div>
+      )}
 
       {products.error ? (
         <ErrorBox message={products.error} onRetry={products.reload} />
@@ -92,11 +109,11 @@ export default function Products() {
           />
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {list.map((p) => {
             const Icon = p.type === 'directo' ? CupSoda : Pizza;
             return (
-              <article key={p.id} className={cx('card flex flex-col p-5 transition-all hover:shadow-pop', !p.active && 'opacity-60')}>
+              <article key={p.id} className={cx('card flex min-w-0 flex-col p-4 transition-all hover:shadow-pop sm:p-5', !p.active && 'opacity-60')}>
                 <div className="flex items-start gap-3">
                   <span className={cx('grid size-11 shrink-0 place-items-center rounded-2xl', p.type === 'directo' ? 'bg-sky-50 text-sky-700' : 'bg-brand-50 text-brand-600')}>
                     <Icon className="size-5" />
@@ -137,7 +154,7 @@ export default function Products() {
                   </p>
                 )}
 
-                <div className="mt-4 flex gap-2">
+                <div className="mt-4 flex flex-wrap gap-2">
                   <button className="btn-secondary btn-sm flex-1" onClick={() => setEditing({ product: p })}>
                     <Pencil className="size-4" /> {p.type === 'directo' ? 'Editar' : 'Editar receta'}
                   </button>

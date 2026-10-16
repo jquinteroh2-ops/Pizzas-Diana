@@ -87,8 +87,8 @@ function KitchenHome() {
         </section>
       )}
 
-      <div className={cx('grid gap-3 print:hidden', cook ? 'grid-cols-3' : 'grid-cols-2')}>
-        {cook && <ActionTile icon={ChefHat} title="Preparar" text="Cebolla, masa, pechuga…" tone="brand" onClick={() => setFlow({ kind: 'preparar' })} />}
+      <div className={cx('grid gap-3 print:hidden', cook ? 'grid-cols-2 min-[400px]:grid-cols-3' : 'grid-cols-2')}>
+        {cook && <ActionTile icon={ChefHat} title="Preparar" text="Cebolla, masa, pechuga…" tone="brand" className="col-span-2 min-[400px]:col-span-1" onClick={() => setFlow({ kind: 'preparar' })} />}
         <ActionTile icon={Megaphone} title="Falta algo" text="Avisa lo que se acaba" tone="amber" onClick={() => setFlow({ kind: 'faltante' })} />
         <ActionTile icon={Trash2} title="Dar de baja" text="Dañado, vencido, se cayó" tone="ink" onClick={() => setFlow({ kind: 'baja' })} />
       </div>
