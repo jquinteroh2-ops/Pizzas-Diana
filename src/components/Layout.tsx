@@ -15,6 +15,12 @@ import {
   ChefHat,
   CalendarCheck,
   Trophy,
+  ClipboardList,
+  Scale,
+  Wheat,
+  Trash2,
+  History,
+  ChevronDown,
   type LucideIcon,
 } from 'lucide-react';
 import { Logo } from './Logo';
@@ -22,38 +28,56 @@ import { cx } from './ui';
 import { navigate, useApp, type Action, type RouteName } from '../lib/app';
 import { ROLE_LABELS } from '../../shared/permissions.ts';
 
+type NavGroup = 'hojas' | 'principal' | 'mas';
+
 interface NavItem {
   name: RouteName;
   label: string;
   icon: LucideIcon;
   need?: Action;
+  group: NavGroup;
 }
 
-// El orden importa: la primera sección permitida es la pantalla de inicio de cada rol
-// (administrador → Inicio, caja → Registrar venta, cocina → Cocina).
+// Todo el sistema funciona como las hojas de papel de Pizza Diana: lo primero del menú
+// son las hojas; lo demás queda en «Más». El orden importa: la primera sección
+// permitida es la pantalla de inicio (administrador y cocina → Inventario diario,
+// caja → Registrar venta).
 export const NAV: NavItem[] = [
-  { name: 'inicio', label: 'Inicio', icon: LayoutDashboard, need: 'reports.view' },
-  { name: 'mas-vendidos', label: 'Más vendidos', icon: Trophy, need: 'reports.view' },
-  { name: 'vender', label: 'Registrar venta', icon: ShoppingBag, need: 'sales.create' },
-  { name: 'cocina', label: 'Cocina', icon: ChefHat, need: 'kitchen.report' },
-  { name: 'plan', label: 'Plan de preparación', icon: CalendarCheck, need: 'kitchen.use' },
-  { name: 'inventario', label: 'Inventario', icon: Package, need: 'inventory.view' },
-  { name: 'productos', label: 'Productos y recetas', icon: Pizza, need: 'products.edit' },
-  { name: 'historial', label: 'Historial de ventas', icon: ReceiptText, need: 'sales.create' },
-  { name: 'reportes', label: 'Reportes', icon: BarChart3, need: 'reports.view' },
-  { name: 'usuarios', label: 'Usuarios', icon: Users, need: 'users.manage' },
-  { name: 'configuracion', label: 'Configuración', icon: Settings, need: 'settings.manage' },
+  { name: 'hoja-inventario', label: 'Inventario diario', icon: ClipboardList, need: 'kitchen.use', group: 'hojas' },
+  { name: 'hoja-ventas', label: 'Ventas del día', icon: ReceiptText, need: 'reports.view', group: 'hojas' },
+  { name: 'hoja-merma', label: 'Merma', icon: Scale, need: 'kitchen.use', group: 'hojas' },
+  { name: 'hoja-masa', label: 'Masa de pizza', icon: Wheat, need: 'kitchen.use', group: 'hojas' },
+  { name: 'hoja-bajas', label: 'Bajas', icon: Trash2, need: 'kitchen.use', group: 'hojas' },
+  { name: 'vender', label: 'Registrar venta', icon: ShoppingBag, need: 'sales.create', group: 'principal' },
+  { name: 'cocina', label: 'Cocina', icon: ChefHat, need: 'kitchen.report', group: 'principal' },
+  { name: 'historial', label: 'Historial de ventas', icon: History, need: 'sales.create', group: 'principal' },
+  { name: 'inicio', label: 'Tablero', icon: LayoutDashboard, need: 'reports.view', group: 'mas' },
+  { name: 'mas-vendidos', label: 'Más vendidos', icon: Trophy, need: 'reports.view', group: 'mas' },
+  { name: 'reportes', label: 'Reportes', icon: BarChart3, need: 'reports.view', group: 'mas' },
+  { name: 'plan', label: 'Plan de preparación', icon: CalendarCheck, need: 'kitchen.use', group: 'mas' },
+  { name: 'inventario', label: 'Inventario', icon: Package, need: 'inventory.view', group: 'mas' },
+  { name: 'productos', label: 'Productos y recetas', icon: Pizza, need: 'products.edit', group: 'mas' },
+  { name: 'usuarios', label: 'Usuarios', icon: Users, need: 'users.manage', group: 'mas' },
+  { name: 'configuracion', label: 'Configuración', icon: Settings, need: 'settings.manage', group: 'mas' },
 ];
 
 export function allowedNav(can: (a: Action) => boolean) {
   return NAV.filter((n) => !n.need || can(n.need));
 }
 
-/** La caja usa «Cocina» solo para avisar faltantes y bajas. */
-function navLabel(n: NavItem, can: (a: Action) => boolean) {
-  if (n.name === 'cocina' && !can('kitchen.use')) return 'Faltantes y bajas';
-  return n.label;
+/** Algunas secciones cambian de nombre o de lugar según quién entra. */
+function navView(n: NavItem, can: (a: Action) => boolean): { label: string; group: NavGroup } {
+  if (n.name === 'cocina') {
+    if (can('kitchen.manage')) return { label: 'Cocina (control)', group: 'mas' };
+    if (can('kitchen.use')) return { label: 'Hoy en cocina', group: 'principal' };
+    return { label: 'Faltantes y bajas', group: 'principal' };
+  }
+  // El administrador no vende a diario: el historial va en «Más».
+  if (n.name === 'historial' && can('kitchen.manage')) return { label: n.label, group: 'mas' };
+  return { label: n.label, group: n.group };
 }
+
+const MORE_KEY = 'pd_menu_mas';
 
 function initials(name: string) {
   return name
@@ -67,37 +91,78 @@ function initials(name: string) {
 export function Layout({ current, children }: { current: RouteName; children: ReactNode }) {
   const { user, can, logout, session } = useApp();
   const [open, setOpen] = useState(false);
-  const items = allowedNav(can);
-  // En el celular, la barra inferior muestra las 4 secciones principales de cada rol.
-  const bottom = items.filter((i) => ['inicio', 'vender', 'cocina', 'plan', 'inventario', 'historial'].includes(i.name)).slice(0, 4);
+  const items = allowedNav(can).map((n) => ({ ...n, ...navView(n, can) }));
+  const inMore = items.some((n) => n.group === 'mas' && n.name === current);
+  const [moreOpen, setMoreOpen] = useState(() => {
+    try {
+      return localStorage.getItem(MORE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleMore = () => {
+    const next = !moreOpen;
+    setMoreOpen(next);
+    try {
+      localStorage.setItem(MORE_KEY, next ? '1' : '0');
+    } catch {
+      // Sin almacenamiento: solo se recuerda mientras la página esté abierta.
+    }
+  };
+  // En el celular, la barra inferior muestra las 4 primeras secciones (las hojas, en cocina).
+  const bottom = items.filter((i) => i.group !== 'mas').slice(0, 4);
 
   const go = (n: RouteName) => {
     setOpen(false);
     navigate(n);
   };
 
+  const navButton = (n: (typeof items)[number]) => {
+    const active = n.name === current;
+    const Icon = n.icon;
+    return (
+      <button
+        key={n.name}
+        onClick={() => go(n.name)}
+        className={cx(
+          'group flex items-center gap-3 rounded-xl px-3.5 py-2 text-left text-sm font-medium transition-all',
+          active ? 'bg-white/[0.09] text-white shadow-inner' : 'text-white/60 hover:bg-white/[0.05] hover:text-white',
+        )}
+        aria-current={active ? 'page' : undefined}
+      >
+        <span className={cx('grid size-8 place-items-center rounded-lg transition-colors', active ? 'bg-brand-600 text-white' : 'bg-white/[0.04] text-white/70 group-hover:text-white')}>
+          <Icon className="size-[18px]" />
+        </span>
+        {n.label}
+      </button>
+    );
+  };
+
+  const groupTitle = (t: string) => <p className="mt-3 mb-1 px-3.5 text-[11px] font-bold tracking-wider text-white/35 uppercase first:mt-0">{t}</p>;
+  const sheets = items.filter((n) => n.group === 'hojas');
+  const main = items.filter((n) => n.group === 'principal');
+  const more = items.filter((n) => n.group === 'mas');
+  const showMore = moreOpen || inMore;
+
   const navList = (
-    <nav className="flex flex-col gap-1">
-      {items.map((n) => {
-        const active = n.name === current;
-        const Icon = n.icon;
-        return (
+    <nav className="flex flex-col gap-0.5">
+      {sheets.length > 0 && groupTitle('Hojas')}
+      {sheets.map(navButton)}
+      {main.length > 0 && sheets.length > 0 && groupTitle('Caja y cocina')}
+      {main.map(navButton)}
+      {more.length > 0 && (
+        <>
           <button
-            key={n.name}
-            onClick={() => go(n.name)}
-            className={cx(
-              'group flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-left text-sm font-medium transition-all',
-              active ? 'bg-white/[0.09] text-white shadow-inner' : 'text-white/60 hover:bg-white/[0.05] hover:text-white',
-            )}
-            aria-current={active ? 'page' : undefined}
+            onClick={toggleMore}
+            className="mt-3 flex items-center justify-between rounded-xl px-3.5 py-2 text-left text-[11px] font-bold tracking-wider text-white/45 uppercase hover:text-white/80"
+            aria-expanded={showMore}
           >
-            <span className={cx('grid size-8 place-items-center rounded-lg transition-colors', active ? 'bg-brand-600 text-white' : 'bg-white/[0.04] text-white/70 group-hover:text-white')}>
-              <Icon className="size-[18px]" />
-            </span>
-            {navLabel(n, can)}
+            Más
+            <ChevronDown className={cx('size-4 transition-transform', showMore && 'rotate-180')} />
           </button>
-        );
-      })}
+          {showMore && more.map(navButton)}
+        </>
+      )}
     </nav>
   );
 
@@ -180,7 +245,7 @@ export function Layout({ current, children }: { current: RouteName; children: Re
           return (
             <button key={n.name} onClick={() => go(n.name)} className={cx('flex flex-col items-center gap-1 py-2.5 text-[11px] font-semibold', active ? 'text-brand-600' : 'text-ink-500')}>
               <Icon className="size-5" />
-              {n.name === 'plan' ? 'Plan' : navLabel(n, can).split(' ')[0]}
+              {n.label.split(' ')[0]}
             </button>
           );
         })}

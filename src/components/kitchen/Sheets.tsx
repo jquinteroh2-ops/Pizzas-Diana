@@ -5,50 +5,16 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { ChevronLeft, ChevronRight, Printer, Pencil, Copy, Loader2, Camera, Plus } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useApi, useApp } from '../../lib/app';
-import type { InventorySheet, InventorySheetLine, Preparation, Production, Waste } from '../../lib/types';
+import type { InventorySheet, InventorySheetLine, PeriodReport, Preparation, Production, Waste } from '../../lib/types';
 import { useToast } from '../toast';
-import { Loading, ErrorBox, cx } from '../ui';
+import { Loading, ErrorBox, Modal, cx } from '../ui';
+import { CountReview, RejectWaste } from './Review';
+import { WastePhoto } from './ReportFlows';
 import { formatNumber, formatQty, fromMilli, niceUnit, toMilli, UNIT_SHORT, baseOf, type BaseUnit, type Unit } from '../../../shared/units.ts';
 import { formatPacks, WASTE_REASON_LABELS, type Location } from '../../../shared/kitchen.ts';
 import { addDays, daysBetween, formatTime, localDate, shortDate, shortDateDow, weekEnd, weekStart } from '../../../shared/dates.ts';
 import type { Flow } from './FlowHost';
 import { parseQty, smallUnit, validQty } from './helpers';
-
-type SheetTab = 'inventario' | 'merma' | 'masa' | 'bajas';
-
-const TABS: { value: SheetTab; label: string }[] = [
-  { value: 'inventario', label: 'Inventario diario' },
-  { value: 'merma', label: 'Merma' },
-  { value: 'masa', label: 'Masa de pizza' },
-  { value: 'bajas', label: 'Bajas' },
-];
-
-/** Las 4 hojas con sus pestañas. `onFlow` abre preparar / dar de baja desde la hoja. */
-export function KitchenSheets({ onFlow }: { onFlow: (f: Flow) => void }) {
-  const [tab, setTab] = useState<SheetTab>('inventario');
-  return (
-    <section>
-      <div className="-mx-4 mb-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0 print:hidden">
-        {TABS.map((t) => (
-          <button
-            key={t.value}
-            onClick={() => setTab(t.value)}
-            className={cx(
-              'shrink-0 rounded-xl border px-4 py-2 text-sm font-bold transition-all',
-              tab === t.value ? 'border-ink-900 bg-ink-900 text-white shadow-sm' : 'border-cream-300 bg-white text-ink-700 hover:border-ink-400/50',
-            )}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-      {tab === 'inventario' && <InventoryDaySheet />}
-      {tab === 'merma' && <MermaSheet onFlow={onFlow} />}
-      {tab === 'masa' && <MasaSheet onFlow={onFlow} />}
-      {tab === 'bajas' && <BajasSheet onFlow={onFlow} />}
-    </section>
-  );
-}
 
 // ---------- Piezas con el estilo de la hoja de papel ----------
 
@@ -143,13 +109,14 @@ function cellMilli(c: Cell | undefined, l: InventorySheetLine): number | null {
   return (hasP ? Math.round(parseQty(c.packs) * l.pack_size_m) : 0) + (hasL ? toMilli(parseQty(c.loose), smallUnit(l.base_unit)) : 0);
 }
 
-function InventoryDaySheet() {
+export function InventoryDaySheet() {
   const { can, bump } = useApp();
   const toast = useToast();
   const today = localDate();
   const [date, setDate] = useState(today);
   const sheet = useApi<InventorySheet>(`/sheets/inventory?date=${date}`, [date]);
   const [edit, setEdit] = useState<Edit>(null);
+  const [review, setReview] = useState<number | null>(null);
   const [cells, setCells] = useState<Record<number, Cell>>({});
   const [busy, setBusy] = useState(false);
   const canFill = can('kitchen.use') && date === today;
@@ -228,8 +195,18 @@ function InventoryDaySheet() {
             return (
               <div key={s.location}>
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2 print:hidden">
-                  <p className="text-xs text-ink-500">
+                  <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-500">
                     {status(s.apertura, 'Inicio')} · {status(s.cierre, 'Fin')}
+                    {/* El administrador revisa y aplica la diferencia desde la misma hoja. */}
+                    {admin &&
+                      ([s.apertura, s.cierre] as const).map(
+                        (c, i) =>
+                          c?.status === 'pendiente' && (
+                            <button key={i} className="rounded-md bg-brand-600 px-2 py-0.5 text-[11px] font-bold text-white" onClick={() => setReview(c.id)}>
+                              Revisar {i === 0 ? 'inicio' : 'fin'}
+                            </button>
+                          ),
+                      )}
                   </p>
                   {canFill &&
                     (editing ? (
@@ -332,6 +309,7 @@ function InventoryDaySheet() {
           </p>
         </div>
       )}
+      {review && <CountReview id={review} onClose={() => setReview(null)} />}
     </Paper>
   );
 }
@@ -354,7 +332,7 @@ const dayHead = (d: string) => {
 
 // ---------- 2. Merma ----------
 
-function MermaSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
+export function MermaSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
   const { can } = useApp();
   const today = localDate();
   const [date, setDate] = useState(today);
@@ -456,7 +434,7 @@ function MermaSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
 
 // ---------- 3. Masa de pizza ----------
 
-function MasaSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
+export function MasaSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
   const { can } = useApp();
   const today = localDate();
   const [date, setDate] = useState(today);
@@ -582,12 +560,32 @@ function MasaSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
 
 // ---------- 4. Formato de bajas ----------
 
-function BajasSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
+export function BajasSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
+  const { can, bump } = useApp();
+  const toast = useToast();
+  const admin = can('kitchen.manage');
   const today = localDate();
   const [date, setDate] = useState(today);
+  const [busy, setBusy] = useState<number | null>(null);
+  const [reject, setReject] = useState<Waste | null>(null);
+  const [photo, setPhoto] = useState<Waste | null>(null);
   const from = weekStart(date);
   const to = weekEnd(date);
   const wastes = useApi<Waste[]>(`/wastes?from=${from}&to=${to}&limit=500`, [from, to]);
+
+  // El administrador autoriza en la misma hoja, como firmaba el formato de papel.
+  const approve = async (w: Waste) => {
+    setBusy(w.id);
+    try {
+      await api.post(`/wastes/${w.id}/review`, { decision: 'aprobar' });
+      toast.success('Baja autorizada', `${w.item_name}: se descontó del inventario.`);
+      bump();
+    } catch (e) {
+      toast.fail(e);
+    } finally {
+      setBusy(null);
+    }
+  };
   const rows = [...(wastes.data ?? [])].sort((a, b) => a.reported_at.localeCompare(b.reported_at));
   const empty = Math.max(0, 12 - rows.length);
 
@@ -632,10 +630,26 @@ function BajasSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
                   </td>
                   <td className={cx(TD, 'uppercase')}>{w.reported_by_name}</td>
                   <td className={cx(TD, 'text-center text-[12px] font-bold')}>
-                    <span className={w.status === 'aprobada' ? 'text-emerald-700' : w.status === 'rechazada' ? 'text-brand-700' : 'text-amber-700'}>
-                      {w.status === 'aprobada' ? `Autorizada · ${w.reviewed_by_name ?? ''}` : w.status === 'rechazada' ? 'Rechazada' : 'Por autorizar'}
-                    </span>
-                    {w.has_photo && <Camera className="ml-1 inline size-3.5 text-ink-500" aria-label="Con foto" />}
+                    {w.status === 'pendiente' && admin ? (
+                      <span className="flex items-center justify-center gap-1 print:hidden">
+                        <button className="rounded-md bg-emerald-600 px-2 py-1 text-[11px] font-bold text-white disabled:opacity-50" disabled={busy === w.id} onClick={() => void approve(w)}>
+                          {busy === w.id ? <Loader2 className="size-3 animate-spin" /> : 'Aprobar'}
+                        </button>
+                        <button className="rounded-md border border-ink-400 px-2 py-1 text-[11px] font-bold text-ink-700" onClick={() => setReject(w)}>
+                          Rechazar
+                        </button>
+                      </span>
+                    ) : (
+                      <span className={w.status === 'aprobada' ? 'text-emerald-700' : w.status === 'rechazada' ? 'text-brand-700' : 'text-amber-700'}>
+                        {w.status === 'aprobada' ? `Autorizada · ${w.reviewed_by_name ?? ''}` : w.status === 'rechazada' ? 'Rechazada' : 'Por autorizar'}
+                      </span>
+                    )}
+                    {w.has_photo && (
+                      <button className="ml-1 inline-flex align-middle text-ink-500 hover:text-brand-700 print:hidden" onClick={() => setPhoto(w)} aria-label="Ver la foto">
+                        <Camera className="size-4" />
+                      </button>
+                    )}
+                    {w.status === 'rechazada' && w.review_note && <span className="block text-[10px] font-normal text-ink-500">{w.review_note}</span>}
                   </td>
                 </tr>
               ))}
@@ -649,6 +663,105 @@ function BajasSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+      {reject && <RejectWaste w={reject} onClose={() => setReject(null)} />}
+      {photo && (
+        <Modal open onClose={() => setPhoto(null)} title={`Foto · ${photo.item_name}`} subtitle={`${photo.reported_by_name} · ${WASTE_REASON_LABELS[photo.reason]}`}>
+          <WastePhoto id={photo.id} className="max-h-[60dvh] w-full rounded-xl" />
+        </Modal>
+      )}
+    </Paper>
+  );
+}
+
+// ---------- 5. Ventas del día ----------
+
+/**
+ * Lo que vendió la caja ese día y lo que esas ventas descontaron del inventario,
+ * en el mismo formato de las hojas (sin gráficos).
+ */
+export function VentasSheet() {
+  const today = localDate();
+  const [date, setDate] = useState(today);
+  const rep = useApi<PeriodReport>(`/reports?period=dia&date=${date}`, [date]);
+  const r = rep.data;
+  const rows = r?.byProduct ?? [];
+  const cons = r?.consumption ?? [];
+  const blanks = (n: number, cols: number) =>
+    Array.from({ length: Math.max(0, n) }, (_, i) => (
+      <tr key={`v${i}`}>
+        {Array.from({ length: cols }, (__, j) => (
+          <td key={j} className={cx(TD, 'h-8')} />
+        ))}
+      </tr>
+    ));
+
+  return (
+    <Paper title="Ventas del día" subtitle={date === today ? `Hoy, ${shortDateDow(date)}` : shortDateDow(date)} nav={<DayNav date={date} setDate={setDate} />}>
+      {rep.error ? (
+        <ErrorBox message={rep.error} onRetry={rep.reload} />
+      ) : !r ? (
+        <Loading />
+      ) : (
+        <div className="grid gap-6 lg:grid-cols-2">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[360px] border-collapse">
+              <thead>
+                <tr>
+                  <td className={SECTION} colSpan={3}>
+                    Lo que se vendió
+                  </td>
+                </tr>
+                <tr>
+                  <th className={cx(TH, 'w-10')}>#</th>
+                  <th className={cx(TH, 'text-left')}>Producto</th>
+                  <th className={cx(TH, 'w-28')}>Cantidad</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((p, i) => (
+                  <tr key={p.product_id}>
+                    <td className={cx(TD, 'text-center text-ink-500 tabular-nums')}>{i + 1}</td>
+                    <td className={cx(TD, 'font-semibold uppercase')}>{p.name}</td>
+                    <td className={cx(TD, 'text-center font-bold tabular-nums')}>{formatNumber(p.units)}</td>
+                  </tr>
+                ))}
+                {blanks(8 - rows.length, 3)}
+                <tr>
+                  <td className={cx(TD, 'font-extrabold uppercase text-[11px]')} colSpan={2}>
+                    Total ({formatNumber(r.salesCount)} ventas{r.annulled ? ` · ${r.annulled} anuladas no cuentan` : ''})
+                  </td>
+                  <td className={cx(TD, 'text-center font-extrabold tabular-nums')}>{formatNumber(r.total)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[360px] border-collapse">
+              <thead>
+                <tr>
+                  <td className={SECTION} colSpan={2}>
+                    Lo que se descontó del inventario
+                  </td>
+                </tr>
+                <tr>
+                  <th className={cx(TH, 'text-left')}>Insumo</th>
+                  <th className={cx(TH, 'w-32')}>Cantidad</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cons.map((c) => (
+                  <tr key={c.item_id}>
+                    <td className={cx(TD, 'font-semibold uppercase')}>{c.name}</td>
+                    <td className={cx(TD, 'text-center tabular-nums')}>{formatQty(c.total_m, niceUnit(c.total_m, c.base_unit))}</td>
+                  </tr>
+                ))}
+                {blanks(8 - cons.length, 2)}
+              </tbody>
+            </table>
+            <p className="mt-1 text-[11px] text-ink-500">Según la receta de cada producto. Se descuenta solo, en cada venta.</p>
+          </div>
         </div>
       )}
     </Paper>

@@ -17,8 +17,14 @@ import SettingsPage from './pages/Settings';
 import Kitchen from './pages/Kitchen';
 import PrepPlan from './pages/PrepPlan';
 import TopSellers from './pages/TopSellers';
+import { HojaBajas, HojaInventario, HojaMasa, HojaMerma, HojaVentas } from './pages/SheetPages';
 
 const PAGES: Record<RouteName, () => React.JSX.Element> = {
+  'hoja-inventario': HojaInventario,
+  'hoja-ventas': HojaVentas,
+  'hoja-merma': HojaMerma,
+  'hoja-masa': HojaMasa,
+  'hoja-bajas': HojaBajas,
   inicio: Dashboard,
   'mas-vendidos': TopSellers,
   cocina: Kitchen,

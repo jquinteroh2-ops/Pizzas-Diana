@@ -13,6 +13,11 @@ export function canDo(user: User | null, action: Action): boolean {
 // ---------- Rutas por hash (#/inventario?item=3) ----------
 
 export type RouteName =
+  | 'hoja-inventario'
+  | 'hoja-ventas'
+  | 'hoja-merma'
+  | 'hoja-masa'
+  | 'hoja-bajas'
   | 'inicio'
   | 'mas-vendidos'
   | 'cocina'
@@ -33,7 +38,8 @@ export interface Route {
 function parseHash(): Route {
   const raw = window.location.hash.replace(/^#\/?/, '');
   const [path, query] = raw.split('?');
-  return { name: (path || 'inicio') as RouteName, params: new URLSearchParams(query ?? '') };
+  // Sin sección en la dirección: Routed lleva a la primera permitida (Inventario diario, Registrar venta…).
+  return { name: path as RouteName, params: new URLSearchParams(query ?? '') };
 }
 
 export function useHashRoute(): Route {

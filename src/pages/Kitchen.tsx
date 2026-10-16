@@ -8,7 +8,6 @@ import { PageHeader, Loading, ErrorBox, Badge, DemoTag, cx } from '../components
 import { ActionTile } from '../components/kitchen/common';
 import { efficiencyTone } from '../components/kitchen/helpers';
 import { FlowHost, type Flow } from '../components/kitchen/FlowHost';
-import { KitchenSheets } from '../components/kitchen/Sheets';
 import { formatQty, niceUnit, baseOf } from '../../shared/units.ts';
 import { formatTime, longDate } from '../../shared/dates.ts';
 import { COUNT_KIND_LABELS, SHORTAGE_LEVEL_LABELS, WASTE_REASON_LABELS } from '../../shared/kitchen.ts';
@@ -93,13 +92,6 @@ function KitchenHome() {
         <ActionTile icon={Megaphone} title="Falta algo" text="Avisa lo que se acaba" tone="amber" onClick={() => setFlow({ kind: 'faltante' })} />
         <ActionTile icon={Trash2} title="Dar de baja" text="Dañado, vencido, se cayó" tone="ink" onClick={() => setFlow({ kind: 'baja' })} />
       </div>
-
-      {/* Las hojas de papel de la cocina, ahora en el sistema. */}
-      {cook && (
-        <div className="mt-6">
-          <KitchenSheets onFlow={setFlow} />
-        </div>
-      )}
 
       <div className="mt-6 grid gap-5 lg:grid-cols-2 print:hidden">
         <section className="card p-5">
