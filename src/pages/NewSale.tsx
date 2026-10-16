@@ -29,7 +29,11 @@ export default function NewSale() {
   // Un identificador por venta: si se envía dos veces (doble clic, red lenta), el servidor no la duplica.
   const requestId = useRef<string>(newRequestId());
 
-  const sellable = useMemo(() => (products.data ?? []).filter((p) => p.active), [products.data]);
+  // Los adicionales se piden junto con un plato: van al final para que primero se vean los platos.
+  const sellable = useMemo(
+    () => (products.data ?? []).filter((p) => p.active).sort((a, b) => Number(a.category === 'Adicionales') - Number(b.category === 'Adicionales')),
+    [products.data],
+  );
   const categories = useMemo(() => [...new Set(sellable.map((p) => p.category))], [sellable]);
   const visible = sellable.filter((p) => (!cat || p.category === cat) && (!q || p.name.toLowerCase().includes(q.trim().toLowerCase())));
   const byId = new Map(sellable.map((p) => [p.id, p]));

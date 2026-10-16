@@ -47,7 +47,7 @@ export const ITEM_CATEGORIES = [
   'Empaques',
   'Otros',
 ] as const;
-export const PRODUCT_CATEGORIES = ['Pizzas', 'Hamburguesas', 'Perros', 'Salchipapas', 'Picadas', 'Asados', 'Pollo', 'Bebidas', 'Entradas', 'Postres', 'Otros'] as const;
+export const PRODUCT_CATEGORIES = ['Pizzas', 'Hamburguesas', 'Perros', 'Salchipapas', 'Picadas', 'Asados', 'Pollo', 'Bebidas', 'Adicionales', 'Entradas', 'Postres', 'Otros'] as const;
 
 export interface Item {
   id: number;

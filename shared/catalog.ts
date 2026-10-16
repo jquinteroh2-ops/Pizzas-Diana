@@ -83,7 +83,17 @@ export const CATALOG_ITEMS: CatalogItem[] = [
   { key: 'uchuvas', name: 'Uchuvas', category: 'Verduras y frutas', location: 'Nevera Coca-Cola', unit: 'g', kind: 'insumo', min: 200, demoQty: 500 },
   { key: 'levadura', name: 'Levadura fresca', category: 'Abarrotes', location: 'Nevera Coca-Cola', unit: 'g', kind: 'insumo', min: 100, demoQty: 450 },
   { key: 'vino', name: 'Vino de cocina', category: 'Abarrotes', location: 'Nevera Coca-Cola', unit: 'ml', kind: 'insumo', min: 300, demoQty: 605 },
-  { key: 'gaseosa', name: 'Gaseosa 400 ml', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 24, demoQty: 60 },
+  { key: 'leche', name: 'Leche', category: 'Lácteos', location: 'Nevera Coca-Cola', unit: 'l', kind: 'insumo', min: 2, demoQty: 6 },
+  { key: 'limon', name: 'Limón', category: 'Verduras y frutas', location: 'Nevera Coca-Cola', unit: 'kg', kind: 'insumo', min: 1, demoQty: 2.5 },
+  // Bebidas de la carta: cada presentación se cuenta por unidad.
+  { key: 'postobon_125', name: 'Postobón 1,25 L', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 6, demoQty: 12 },
+  { key: 'cocacola_15', name: 'Coca-Cola 1,5 L', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 6, demoQty: 12 },
+  { key: 'hit_litro', name: 'Hit litro', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 6, demoQty: 10 },
+  { key: 'eco_litro', name: 'Eco litro', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 6, demoQty: 10 },
+  { key: 'cocacola_pet', name: 'Coca-Cola Pet', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 12, demoQty: 30 },
+  { key: 'postobon_pet', name: 'Postobón Pet', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 12, demoQty: 30 },
+  { key: 'hit_pet', name: 'Hit Pet', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 12, demoQty: 24 },
+  { key: 'agua_pet', name: 'Agua Pet', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 12, demoQty: 24 },
   // ---- Bodega seca ----
   { key: 'harina', name: 'Harina de trigo 0000', category: 'Abarrotes', location: 'Bodega seca', unit: 'kg', kind: 'insumo', min: 15, demoQty: 42 },
   { key: 'sal', name: 'Sal', category: 'Abarrotes', location: 'Bodega seca', unit: 'g', kind: 'insumo', min: 500, demoQty: 2500 },
@@ -91,6 +101,9 @@ export const CATALOG_ITEMS: CatalogItem[] = [
   { key: 'azucar', name: 'Azúcar', category: 'Abarrotes', location: 'Bodega seca', unit: 'g', kind: 'insumo', min: 500, demoQty: 2000 },
   { key: 'pan_hamburguesa', name: 'Pan de hamburguesa', category: 'Masas y panes', location: 'Bodega seca', unit: 'unidad', kind: 'insumo', min: 12, demoQty: 40 },
   { key: 'pan_perro', name: 'Pan de perro', category: 'Masas y panes', location: 'Bodega seca', unit: 'unidad', kind: 'insumo', min: 12, demoQty: 30 },
+  { key: 'pulpa_fruta', name: 'Pulpa de fruta', category: 'Verduras y frutas', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 1, demoQty: 3 },
+  { key: 'crema_coco', name: 'Crema de coco', category: 'Abarrotes', location: 'Bodega seca', unit: 'ml', kind: 'insumo', min: 400, demoQty: 1200 },
+  { key: 'cerezas', name: 'Cerezas en almíbar', category: 'Abarrotes', location: 'Bodega seca', unit: 'g', kind: 'insumo', min: 200, demoQty: 600 },
   { key: 'pan_suave', name: 'Pan suave pequeño', category: 'Masas y panes', location: 'Bodega seca', unit: 'unidad', kind: 'insumo', min: 12, demoQty: 30 },
   { key: 'aceitunas', name: 'Aceitunas', category: 'Abarrotes', location: 'Bodega seca', unit: 'g', kind: 'insumo', min: 200, demoQty: 600 },
   { key: 'oregano', name: 'Orégano', category: 'Abarrotes', location: 'Bodega seca', unit: 'g', kind: 'insumo', min: 50, demoQty: 150 },
@@ -483,5 +496,74 @@ export const CATALOG_PRODUCTS: CatalogProduct[] = [
     ],
     [[3, 3, 2], [4, 4, 2], [6, 6, 1]],
   ),
-  { key: 'gaseosa', name: 'Gaseosa 400 ml', category: 'Bebidas', type: 'directo', weight: 16, description: '', recipe: [['gaseosa', 1, 'unidad']] },
+  // ---- Bebidas ----
+  {
+    key: 'jugo_agua', name: 'Jugo natural en agua', category: 'Bebidas', type: 'preparado', weight: 6,
+    description: 'Pulpa de fruta en agua.',
+    recipe: [['pulpa_fruta', 150, 'g'], ['azucar', 20, 'g']],
+  },
+  {
+    key: 'jugo_leche', name: 'Jugo natural en leche', category: 'Bebidas', type: 'preparado', weight: 5,
+    description: 'Pulpa de fruta en leche.',
+    recipe: [['pulpa_fruta', 150, 'g'], ['leche', 250, 'ml'], ['azucar', 20, 'g']],
+  },
+  { key: 'limonada', name: 'Limonada natural', category: 'Bebidas', type: 'preparado', weight: 5, description: 'Limón, azúcar y hielo.', recipe: [['limon', 80, 'g'], ['azucar', 30, 'g']] },
+  {
+    key: 'limonada_coco', name: 'Limonada de coco', category: 'Bebidas', type: 'preparado', weight: 4,
+    description: 'Limón, crema de coco y hielo.',
+    recipe: [['limon', 60, 'g'], ['crema_coco', 60, 'ml'], ['azucar', 20, 'g']],
+  },
+  {
+    key: 'limonada_cerezada', name: 'Limonada cerezada', category: 'Bebidas', type: 'preparado', weight: 3,
+    description: 'Limón, cerezas en almíbar y hielo.',
+    recipe: [['limon', 70, 'g'], ['cerezas', 30, 'g'], ['azucar', 25, 'g']],
+  },
+  ...(
+    [
+      ['postobon_125', 4],
+      ['cocacola_15', 5],
+      ['hit_litro', 3],
+      ['eco_litro', 2],
+      ['cocacola_pet', 9],
+      ['postobon_pet', 6],
+      ['hit_pet', 4],
+      ['agua_pet', 3],
+    ] as const
+  ).map(([key, weight]) => {
+    const item = CATALOG_ITEMS.find((i) => i.key === key)!;
+    return { key, name: item.name, category: 'Bebidas', type: 'directo' as const, weight, description: '', recipe: [[key, 1, 'unidad']] as Line[] };
+  }),
+  // ---- Adicionales: se agregan a la venta junto con el plato ----
+  ...(
+    [
+      ['ad_maiz_perro', 'Adicional maíz (perro)', [['maiz', 20, 'g']]],
+      ['ad_maiz_salchi', 'Adicional maíz (salchipapa y picada)', [['maiz', 50, 'g']]],
+      ['ad_gratinado', 'Adicional gratinado (asado)', [['queso_mozzarella', 60, 'g']]],
+      ['ad_queso_salchi', 'Adicional queso extra (salchipapa y picada)', [['queso_mozzarella', 70, 'g']]],
+      ['ad_carne_hamb', 'Adicional carne extra (hamburguesa)', [['carne_hamb_gde', 1, 'unidad']]],
+      ['ad_tocineta_perro', 'Adicional tocineta extra (perro y hamburguesa)', [['tocineta', 15, 'g']]],
+      ['ad_tocineta_salchi', 'Adicional tocineta (salchipapa)', [['tocineta', 25, 'g']]],
+      ['ad_tocineta_picada', 'Adicional tocineta (picada)', [['tocineta', 50, 'g']]],
+      ['ad_papas', 'Adicional papas francesas', [['papas', 200, 'g']]],
+    ] as [string, string, Line[]][]
+  ).map(([key, name, recipe]) => ({ key, name, category: 'Adicionales', type: 'preparado' as const, weight: 2, description: '', recipe })),
+  // Adicionales de pizza, por tamaño (cantidades de una MEDIUM ajustadas como las pizzas).
+  ...(
+    [
+      ['borde', 'borde de queso', [['queso_mozzarella', 120, 'g']]],
+      ['maiz', 'maíz', [['maiz', 50, 'g']]],
+      ['tocineta', 'tocineta', [['tocineta', 50, 'g']]],
+      ['queso', 'queso extra', [['queso_mozzarella', 100, 'g']]],
+    ] as [string, string, Line[]][]
+  ).flatMap(([key, name, recipe]) =>
+    PIZZA_SIZES.map((s) => ({
+      key: `ad_pizza_${key}_${s.key}`,
+      name: `Adicional pizza ${name} ${s.name}`,
+      category: 'Adicionales',
+      type: 'preparado' as const,
+      weight: 1,
+      description: `Para una pizza ${s.name}.`,
+      recipe: scale(recipe, s.factor),
+    })),
+  ),
 ];
