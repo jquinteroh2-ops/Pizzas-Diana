@@ -292,6 +292,41 @@ class BrowserDB {
 
   constructor() {
     this.state = this.load();
+    this.ensureDemoLogins();
+  }
+
+  /**
+   * Los botones «Administrador / Caja / Cocina» de la pantalla de entrada deben funcionar
+   * siempre, aunque el navegador tenga datos guardados por una versión anterior (que solo
+   * tenía otros usuarios). No se borra ni cambia nada de lo que ya hay.
+   */
+  private ensureDemoLogins() {
+    const names: Record<Role, string> = { admin: 'Diana (Administradora)', caja: 'Laura (Caja)', cocina: 'Carlos (Cocina)' };
+    let added = false;
+    for (const d of DEMO_LOGINS) {
+      if (this.state.users.some((u) => u.username.toLowerCase() === d.username)) continue;
+      const at = nowIso();
+      this.state.users.push({
+        id: this.state.seq.user++,
+        username: d.username,
+        name: names[d.role],
+        role: d.role,
+        perms: [],
+        active: true,
+        is_demo: false,
+        created_at: at,
+        updated_at: at,
+        password: d.password,
+      });
+      added = true;
+    }
+    if (added) {
+      try {
+        this.save();
+      } catch {
+        // Sin espacio: igual quedan disponibles mientras la página esté abierta.
+      }
+    }
   }
 
   // ---------- Persistencia ----------
