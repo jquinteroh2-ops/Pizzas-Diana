@@ -100,7 +100,8 @@ export function formatPacks(milli: number, packSizeM: number, packLabel: string,
   const packs = Math.floor(milli / packSizeM);
   const rest = milli - packs * packSizeM;
   const label = packLabel || 'paquete';
-  const plural = packs === 1 ? label : label.endsWith('a') || label.endsWith('e') || label.endsWith('o') ? label + 's' : label + 'es';
+  // Las abreviaturas («paq», «und») no llevan plural.
+  const plural = packs === 1 || label.length <= 4 ? label : /[aeo]$/.test(label) ? label + 's' : label + 'es';
   // Lo suelto se muestra en la unidad pequeña: "3 paquetes + 385 g", no "+ 0,385 kg".
   const looseUnit: Unit = unit === 'kg' ? 'g' : unit === 'l' ? 'ml' : unit;
   const parts: string[] = [];

@@ -6,7 +6,7 @@ import { type DB, nowIso, tx, isDemoMode } from '../db.ts';
 import { bad, conflict, notFound, oneOf, optStr, num } from '../errors.ts';
 import { compatible, isUnit, toMilli, type BaseUnit, type Unit } from '../../shared/units.ts';
 import { COUNT_KINDS, COUNT_STATUSES, LOCATIONS, realConsumption, type CountKind, type CountStatus, type Location } from '../../shared/kitchen.ts';
-import { isYmd, localDate } from '../../shared/dates.ts';
+import { addDays, isYmd, localDate } from '../../shared/dates.ts';
 import { applyMovement } from './inventory.ts';
 import { can, type User } from './users.ts';
 
@@ -123,6 +123,17 @@ export function submitCount(db: DB, user: User, body: Record<string, unknown>, o
   const isDemo = opts.isDemo ?? isDemoMode(db);
 
   return tx(db, () => {
+    // Corregir la apertura o el cierre desde la hoja reemplaza el que estaba sin revisar:
+    // si quedaran los dos pendientes y se aplicaran, la diferencia se ajustaría dos veces.
+    if (kind !== 'libre') {
+      db.prepare("UPDATE counts SET status='descartado', reviewed_by=?, reviewed_at=? WHERE location=? AND kind=? AND local_date=? AND status='pendiente'").run(
+        user.id,
+        at,
+        sheet.location,
+        kind,
+        localDate(new Date(at)),
+      );
+    }
     const r = db
       .prepare('INSERT INTO counts(location, kind, note, counted_by, counted_at, local_date, is_demo) VALUES (?,?,?,?,?,?,?)')
       .run(sheet.location, kind, note, user.id, at, localDate(new Date(at)), isDemo ? 1 : 0);
@@ -273,4 +284,83 @@ export function reconciliation(db: DB, date: unknown) {
     }
   }
   return { date, status, lines };
+}
+
+export interface InventorySheetLine {
+  item_id: number;
+  name: string;
+  unit: Unit;
+  base_unit: BaseUnit;
+  pack_size_m: number;
+  pack_label: string;
+  /** Inicio: lo contado en la apertura (null si aún no se contó). */
+  open_m: number | null;
+  /** Entrada: lo que llegó (compras) en el día. */
+  entries_m: number;
+  /** Lo que la cocina preparó de este producto en el día (solo preparaciones). */
+  produced_m: number;
+  /** Fin: lo contado en el cierre. */
+  close_m: number | null;
+  /** Consumo = inicio + entrada + preparado − fin (todo lo que salió de la nevera). */
+  consumption_m: number | null;
+  /** Lo que descontaron las ventas (solo lo ve el administrador). */
+  sales_m: number | null;
+  /** El fin de ayer, para copiarlo como inicio de hoy. */
+  prev_close_m: number | null;
+}
+
+const bogotaStart = (ymd: string) => new Date(`${ymd}T00:00:00-05:00`).toISOString();
+
+function countValues(db: DB, countId: number | undefined): Map<number, number> | null {
+  if (!countId) return null;
+  const rows = db.prepare('SELECT item_id, counted_m FROM count_lines WHERE count_id = ?').all(countId) as { item_id: number; counted_m: number }[];
+  return new Map(rows.map((r) => [r.item_id, r.counted_m]));
+}
+
+/**
+ * La hoja de inventario diario, igual a la de papel: por nevera, cada producto con
+ * Inicio (apertura) | Entrada | Fin (cierre) | Consumo.
+ */
+export function inventorySheet(db: DB, user: User, date: unknown) {
+  if (typeof date !== 'string' || !isYmd(date)) throw bad('Fecha no válida.');
+  const admin = can(user, 'kitchen.manage');
+  const prevDay = addDays(date, -1);
+  const sums = db.prepare(
+    `SELECT type, SUM(CASE WHEN delta_m > 0 THEN delta_m ELSE 0 END) pos, SUM(CASE WHEN delta_m < 0 THEN -delta_m ELSE 0 END) neg
+     FROM movements WHERE item_id = ? AND created_at >= ? AND created_at < ? GROUP BY type`,
+  );
+  const sections = dayCountStatus(db, date).map((s) => {
+    const open = countValues(db, s.apertura?.id);
+    const close = countValues(db, s.cierre?.id);
+    const prevClose = countValues(db, lastCount(db, s.location, 'cierre', prevDay)?.id);
+    // Lo que pasó entre la apertura y el cierre; si falta alguno, el día completo.
+    const from = s.apertura?.counted_at ?? bogotaStart(date);
+    const to = s.cierre && s.cierre.counted_at > from ? s.cierre.counted_at : bogotaStart(addDays(date, 1));
+    const items = db
+      .prepare(
+        `SELECT id item_id, name, unit, base_unit, pack_size_m, pack_label FROM items
+         WHERE active = 1 AND location = ? ORDER BY sort_order, name COLLATE NOCASE`,
+      )
+      .all(s.location) as unknown as Omit<InventorySheetLine, 'open_m' | 'entries_m' | 'produced_m' | 'close_m' | 'consumption_m' | 'sales_m' | 'prev_close_m'>[];
+    const lines: InventorySheetLine[] = items.map((i) => {
+      const by = new Map((sums.all(i.item_id, from, to) as { type: string; pos: number; neg: number }[]).map((r) => [r.type, r]));
+      const entries = by.get('entrada')?.pos ?? 0;
+      const produced = by.get('produccion')?.pos ?? 0;
+      const sales = (by.get('venta')?.neg ?? 0) - (by.get('anulacion')?.pos ?? 0);
+      const openM = open?.get(i.item_id) ?? null;
+      const closeM = close?.get(i.item_id) ?? null;
+      return {
+        ...i,
+        open_m: openM,
+        entries_m: entries,
+        produced_m: produced,
+        close_m: closeM,
+        consumption_m: openM !== null && closeM !== null ? openM + entries + produced - closeM : null,
+        sales_m: admin ? sales : null,
+        prev_close_m: prevClose?.get(i.item_id) ?? null,
+      };
+    });
+    return { location: s.location, apertura: s.apertura, cierre: s.cierre, lines };
+  });
+  return { date, sections };
 }

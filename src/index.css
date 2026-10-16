@@ -110,3 +110,10 @@ body {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* Imprimir una hoja de cocina: solo la hoja, en blanco y con sus bordes. */
+@media print {
+  @page { margin: 10mm; }
+  html, body { background: #fff !important; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}

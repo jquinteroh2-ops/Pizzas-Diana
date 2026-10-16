@@ -147,7 +147,7 @@ test('15. bajas: pendiente no descuenta, aprobada descuenta, rechazada no', () =
   assert.equal(w1.status, 'pendiente');
   assert.equal(w1.has_photo, true);
   assert.equal(qty(db, tomate.id), 2_000_000);
-  // La cocina no ve las bajas de otros, el administrador sí.
+  // La caja solo vería las suyas; la cocina y el administrador, todas.
   assert.equal(wastes.listWastes(db, cook, {}).length, 1);
   assert.equal(wastes.getWastePhoto(db, admin, w1.id).photo, photo);
 
@@ -390,4 +390,35 @@ test('23. caja vs cocina: compara lo que descontaron las ventas con lo que se ga
   assert.equal(t.diff_m, 0);
   // Sin cierre no hay comparación.
   assert.equal(counts.reconciliation(db, '2026-10-13').lines.length, 0);
+});
+
+test('24. hoja de inventario diario: inicio, entrada, fin y consumo como en el papel', () => {
+  const { db, admin, cook, cashier } = setup();
+  const queso = inv.createItem(db, admin, { name: 'Queso', category: 'Lácteos', unit: 'kg', qty: 5, min: 1, location: 'Nevera Coca-Cola', pack_size: 1000, pack_unit: 'g' });
+  const pizza = prod.createProduct(db, { name: 'Pizza', category: 'Pizzas', type: 'preparado', recipe: [{ item_id: queso.id, qty: 200, unit: 'g' }] });
+  const day = '2026-10-14';
+  const at = (h: number) => new Date(`${day}T${String(h).padStart(2, '0')}:00:00-05:00`).toISOString();
+  const count = (kind: string, kg: number, h: number) =>
+    counts.submitCount(db, cook, { location: 'Nevera Coca-Cola', kind, lines: [{ item_id: queso.id, qty: kg, unit: 'kg' }] }, { at: at(h) });
+
+  const first = count('apertura', 4.8, 8);
+  // El cocinero corrige el inicio: el anterior (sin revisar) queda reemplazado, no se aplican los dos.
+  const fixed = count('apertura', 5, 9);
+  assert.equal(counts.getCount(db, admin, first.id).status, 'descartado');
+  counts.reviewCount(db, admin, fixed.id, { decision: 'aplicar' });
+  inv.registerEntry(db, admin, queso.id, { qty: 2, unit: 'kg', reason: 'Compra' }, { at: at(10) });
+  sales.registerSale(db, cashier, { requestId: 'hoja-0001', items: [{ productId: pizza.id, qty: 5 }] }, { at: at(13) });
+  count('cierre', 5.9, 23);
+
+  const sheet = counts.inventorySheet(db, admin, day);
+  const line = sheet.sections.find((s) => s.location === 'Nevera Coca-Cola')!.lines[0];
+  assert.equal(line.open_m, 5_000_000);
+  assert.equal(line.entries_m, 2_000_000);
+  assert.equal(line.close_m, 5_900_000);
+  assert.equal(line.consumption_m, 1_100_000); // 5 + 2 − 5,9
+  assert.equal(line.sales_m, 1_000_000); // 5 pizzas × 200 g
+  assert.equal(line.pack_size_m, 1_000_000);
+  // La cocina no ve lo que descontó caja; al día siguiente le sale el fin de ayer para copiar.
+  assert.equal(counts.inventorySheet(db, cook, day).sections[0].lines[0].sales_m, null);
+  assert.equal(counts.inventorySheet(db, cook, '2026-10-15').sections[0].lines[0].prev_close_m, 5_900_000);
 });

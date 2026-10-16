@@ -8,6 +8,7 @@ import { PageHeader, Loading, ErrorBox, Badge, DemoTag, cx } from '../components
 import { ActionTile } from '../components/kitchen/common';
 import { efficiencyTone } from '../components/kitchen/helpers';
 import { FlowHost, type Flow } from '../components/kitchen/FlowHost';
+import { KitchenSheets } from '../components/kitchen/Sheets';
 import { formatQty, niceUnit, baseOf } from '../../shared/units.ts';
 import { formatTime, longDate } from '../../shared/dates.ts';
 import { COUNT_KIND_LABELS, SHORTAGE_LEVEL_LABELS, WASTE_REASON_LABELS } from '../../shared/kitchen.ts';
@@ -32,10 +33,12 @@ function KitchenHome() {
 
   return (
     <>
+      <div className="print:hidden">
       <PageHeader title={cook ? `¡Buen día, ${firstName}!` : 'Faltantes y bajas'} subtitle={cook ? longDate(d.today) : 'Avísale al administrador lo que falta o lo que hay que botar.'} />
+      </div>
 
       {cook && (
-        <section className="card mb-5 overflow-hidden">
+        <section className="card mb-5 overflow-hidden print:hidden">
           <div className="flex items-center justify-between gap-3 border-b border-cream-200 bg-gradient-to-r from-crust-300/30 to-transparent px-5 py-4">
             <div>
               <h2 className="font-display text-lg font-semibold text-ink-900">Hoy toca preparar</h2>
@@ -85,16 +88,20 @@ function KitchenHome() {
         </section>
       )}
 
-      {cook && <DayCountsCard d={d} onCount={(countKind) => setFlow({ kind: 'conteo', countKind })} />}
-
-      <div className={cx('grid gap-3', cook ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-2')}>
+      <div className={cx('grid gap-3 print:hidden', cook ? 'grid-cols-3' : 'grid-cols-2')}>
         {cook && <ActionTile icon={ChefHat} title="Preparar" text="Cebolla, masa, pechuga…" tone="brand" onClick={() => setFlow({ kind: 'preparar' })} />}
         <ActionTile icon={Megaphone} title="Falta algo" text="Avisa lo que se acaba" tone="amber" onClick={() => setFlow({ kind: 'faltante' })} />
         <ActionTile icon={Trash2} title="Dar de baja" text="Dañado, vencido, se cayó" tone="ink" onClick={() => setFlow({ kind: 'baja' })} />
-        {cook && <ActionTile icon={ClipboardList} title="Contar nevera" text="Congelador, neveras, bodega" tone="green" onClick={() => setFlow({ kind: 'conteo' })} />}
       </div>
 
-      <div className="mt-6 grid gap-5 lg:grid-cols-2">
+      {/* Las hojas de papel de la cocina, ahora en el sistema. */}
+      {cook && (
+        <div className="mt-6">
+          <KitchenSheets onFlow={setFlow} />
+        </div>
+      )}
+
+      <div className="mt-6 grid gap-5 lg:grid-cols-2 print:hidden">
         <section className="card p-5">
           <h2 className="mb-3 flex items-center gap-2 font-display text-lg font-semibold">
             <Clock className="size-5 text-brand-600" /> Lo que registré hoy
@@ -137,7 +144,7 @@ function KitchenHome() {
                 <li key={`c${c.id}`} className="flex items-center gap-3 py-2.5">
                   <ClipboardList className="size-5 shrink-0 text-emerald-700" />
                   <span className="min-w-0 flex-1 text-sm">
-                    {COUNT_KIND_LABELS[c.kind]} de <b>{c.location}</b>: {c.lines_count} productos
+                    {COUNT_KIND_LABELS[c.kind]} de <b>{c.location}</b>: {c.lines_count} {c.lines_count === 1 ? 'producto' : 'productos'}
                     <span className="block text-xs text-ink-500">{formatTime(c.counted_at)}</span>
                   </span>
                   <Badge tone={c.status === 'aplicado' ? 'green' : c.status === 'descartado' ? 'red' : 'amber'}>
@@ -182,50 +189,3 @@ function KitchenHome() {
   );
 }
 
-/** Inventario de apertura y cierre del día, nevera por nevera (como la hoja de papel). */
-function DayCountsCard({ d, onCount }: { d: KitchenToday; onCount: (k: 'apertura' | 'cierre') => void }) {
-  const pending = (k: 'apertura' | 'cierre') => d.dayCounts.filter((x) => !x[k]).length;
-  return (
-    <section className="card mb-5 p-5">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 className="font-display text-lg font-semibold text-ink-900">Inventario del día</h2>
-          <p className="text-xs text-ink-500">Cuenta cada nevera al abrir y al cerrar. Así se sabe cuánto se gastó de verdad.</p>
-        </div>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {(['apertura', 'cierre'] as const).map((k) => {
-          const left = pending(k);
-          return (
-            <div key={k} className={cx('rounded-2xl border p-3', left ? 'border-cream-300' : 'border-emerald-200 bg-emerald-50/60')}>
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-semibold text-ink-900">{k === 'apertura' ? 'Al abrir' : 'Al cerrar'}</p>
-                {left ? (
-                  <button className="btn-primary btn-sm" onClick={() => onCount(k)}>
-                    Contar ({left})
-                  </button>
-                ) : (
-                  <Badge tone="green">Completo</Badge>
-                )}
-              </div>
-              <ul className="mt-2 flex flex-wrap gap-1.5">
-                {d.dayCounts.map((x) => (
-                  <li key={x.location}>
-                    <span
-                      className={cx(
-                        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold',
-                        x[k] ? 'bg-emerald-100 text-emerald-800' : 'bg-cream-200 text-ink-500',
-                      )}
-                    >
-                      {x[k] ? <CheckCircle2 className="size-3" /> : <Circle className="size-3" />} {x.location}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}

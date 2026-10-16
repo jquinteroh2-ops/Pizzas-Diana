@@ -8,6 +8,7 @@ import type {
   CountSheet,
   Dashboard,
   DayCountStatus,
+  InventorySheet,
   Reconciliation,
   ReconciliationLine,
   DemoStatus,
@@ -1012,7 +1013,7 @@ class BrowserDB {
     return this.state.wastes
       .filter(
         (w) =>
-          (can(user, 'kitchen.manage') || w.reported_by === user.id) &&
+          (can(user, 'kitchen.use') || w.reported_by === user.id) &&
           (!q.status || w.status === q.status) &&
           (!q.from || w.local_date >= q.from) &&
           (!q.to || w.local_date <= q.to),
@@ -1024,7 +1025,7 @@ class BrowserDB {
 
   wastePhoto(user: User, id: number) {
     const w = this.state.wastes.find((x) => x.id === id);
-    if (!w || (!can(user, 'kitchen.manage') && w.reported_by !== user.id)) throw notFound('Baja no encontrada.');
+    if (!w || (!can(user, 'kitchen.use') && w.reported_by !== user.id)) throw notFound('Baja no encontrada.');
     return { photo: w.photo };
   }
 
@@ -1227,10 +1228,19 @@ class BrowserDB {
     });
     if (!lines.length) throw bad('Escribe la cantidad de al menos un producto.');
     const at = opts.at ?? nowIso();
+    const kind: CountKind = body.kind === undefined ? 'libre' : oneOf(body.kind, 'tipo de conteo', COUNT_KINDS);
+    // Corregir la apertura o el cierre reemplaza el que estaba sin revisar (igual que el servidor).
+    if (kind !== 'libre') {
+      for (const x of this.state.counts) {
+        if (x.location === sheet.location && x.kind === kind && x.local_date === dayOf(at) && x.status === 'pendiente') {
+          Object.assign(x, { status: 'descartado', reviewed_by: user.id, reviewed_at: at });
+        }
+      }
+    }
     const c: CountRec = {
       id: this.state.seq.count++,
       location: sheet.location,
-      kind: body.kind === undefined ? 'libre' : oneOf(body.kind, 'tipo de conteo', COUNT_KINDS),
+      kind,
       status: 'pendiente',
       note: optStr(body.note, 300),
       counted_by: user.id,
@@ -1315,6 +1325,58 @@ class BrowserDB {
       }
     }
     return { date, status, lines };
+  }
+
+  /** Hoja de inventario diario: igual que el servidor (server/services/counts.ts → inventorySheet). */
+  inventorySheet(user: User, date: unknown): InventorySheet {
+    if (typeof date !== 'string' || !isYmd(date)) throw bad('Fecha no válida.');
+    const admin = can(user, 'kitchen.manage');
+    const valuesOf = (id?: number) => {
+      const c = id ? this.state.counts.find((x) => x.id === id) : undefined;
+      return c ? new Map(c.lines.map((l) => [l.item_id, l.counted_m])) : null;
+    };
+    const dayStart = (ymd: string) => new Date(`${ymd}T00:00:00-05:00`).toISOString();
+    const sections = this.dayCountStatus(date).map((s) => {
+      const open = valuesOf(s.apertura?.id);
+      const close = valuesOf(s.cierre?.id);
+      const prevClose = valuesOf(this.lastCount(s.location, 'cierre', addDays(date, -1))?.id);
+      const from = s.apertura?.counted_at ?? dayStart(date);
+      const to = s.cierre && s.cierre.counted_at > from ? s.cierre.counted_at : dayStart(addDays(date, 1));
+      const lines = this.state.items
+        .filter((i) => i.active && i.location === s.location)
+        .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, 'es'))
+        .map((i) => {
+          let entries = 0;
+          let produced = 0;
+          let sales = 0;
+          for (const m of this.state.movements) {
+            if (m.item_id !== i.id || m.created_at < from || m.created_at >= to) continue;
+            if (m.type === 'entrada' && m.delta_m > 0) entries += m.delta_m;
+            else if (m.type === 'produccion' && m.delta_m > 0) produced += m.delta_m;
+            else if (m.type === 'venta' && m.delta_m < 0) sales -= m.delta_m;
+            else if (m.type === 'anulacion' && m.delta_m > 0) sales -= m.delta_m;
+          }
+          const openM = open?.get(i.id) ?? null;
+          const closeM = close?.get(i.id) ?? null;
+          return {
+            item_id: i.id,
+            name: i.name,
+            unit: i.unit,
+            base_unit: i.base_unit,
+            pack_size_m: i.pack_size_m,
+            pack_label: i.pack_label,
+            open_m: openM,
+            entries_m: entries,
+            produced_m: produced,
+            close_m: closeM,
+            consumption_m: openM !== null && closeM !== null ? openM + entries + produced - closeM : null,
+            sales_m: admin ? sales : null,
+            prev_close_m: prevClose?.get(i.id) ?? null,
+          };
+        });
+      return { location: s.location, apertura: s.apertura, cierre: s.cierre, lines };
+    });
+    return { date, sections };
   }
 
   private applyCount(admin: User, c: CountRec, at: string) {
@@ -2049,7 +2111,7 @@ async function route(method: string, path: string, body: Body): Promise<unknown>
   if ((mm = m(/^\/preparations\/(\d+)\/active$/))) return need('kitchen.manage'), write(() => db.setPreparationActive(Number(mm![1]), body.active === true));
   if (clean === '/productions' && GET) {
     need('kitchen.use');
-    return db.listProductions({ from: qs('from'), to: qs('to'), preparationId: qn('preparationId'), userId: can(user, 'kitchen.manage') ? qn('userId') : user.id, limit: qn('limit') });
+    return db.listProductions({ from: qs('from'), to: qs('to'), preparationId: qn('preparationId'), userId: qn('userId'), limit: qn('limit') });
   }
   if (clean === '/productions' && POST) return need('kitchen.use'), write(() => db.registerProduction(user, body));
   if ((mm = m(/^\/productions\/(\d+)\/annul$/))) return need('kitchen.manage'), write(() => db.annulProduction(user, Number(mm![1]), body));
@@ -2062,6 +2124,7 @@ async function route(method: string, path: string, body: Body): Promise<unknown>
   if ((mm = m(/^\/shortages\/(\d+)\/status$/))) return need('kitchen.manage'), write(() => db.setShortageStatus(Number(mm![1]), body));
   if (clean === '/shopping-list') return need('kitchen.manage'), db.shoppingList();
   if (clean === '/counts/sheet') return need('kitchen.use'), db.countSheet(qs('location'));
+  if (clean === '/sheets/inventory') return need('kitchen.use'), db.inventorySheet(user, qs('date') ?? localDate());
   if (clean === '/counts/day') return need('kitchen.use'), db.dayCountStatus(qs('date') ?? localDate());
   if (clean === '/reconciliation') return need('kitchen.manage'), db.reconciliation(qs('date') ?? localDate());
   if (clean === '/counts' && GET) return need('kitchen.use'), db.listCounts(user, { status: qs('status'), limit: qn('limit') });

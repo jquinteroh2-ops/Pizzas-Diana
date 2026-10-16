@@ -23,6 +23,7 @@ import {
   History as HistoryIcon,
   Undo2,
   Scale,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { navigate, useApi, useApp, useHashRoute } from '../lib/app';
@@ -34,11 +35,12 @@ import { efficiencyTone, LOCATION_ICONS } from '../components/kitchen/helpers';
 import { FlowHost, type Flow } from '../components/kitchen/FlowHost';
 import { EntryForm } from './Inventory';
 import ReconTab from './ReconTab';
+import { KitchenSheets } from '../components/kitchen/Sheets';
 import { baseOf, formatNumber, formatQty, fromMilli, niceUnit, toMilli, unitsFor, UNIT_SHORT, type Unit } from '../../shared/units.ts';
 import { addDays, formatDateTime, formatTime, localDate, shortDate, shortDateDow, weekEnd, weekStart } from '../../shared/dates.ts';
 import { COUNT_KIND_LABELS, SHORTAGE_LEVEL_LABELS, WASTE_REASON_LABELS, type PrepMode } from '../../shared/kitchen.ts';
 
-type Tab = 'pendientes' | 'caja-cocina' | 'compras' | 'preparaciones' | 'registro';
+type Tab = 'pendientes' | 'hojas' | 'caja-cocina' | 'compras' | 'preparaciones' | 'registro';
 
 export default function KitchenAdmin() {
   const route = useHashRoute();
@@ -51,6 +53,7 @@ export default function KitchenAdmin() {
 
   const tabs: { value: Tab; label: string; icon: typeof Inbox; badge?: number }[] = [
     { value: 'pendientes', label: 'Por autorizar', icon: Inbox, badge: pendingCount },
+    { value: 'hojas', label: 'Hojas', icon: FileSpreadsheet },
     { value: 'caja-cocina', label: 'Caja vs cocina', icon: Scale },
     { value: 'compras', label: 'Lista de compras', icon: ShoppingCart, badge: shop.data?.length },
     { value: 'preparaciones', label: 'Preparaciones', icon: BookOpen },
@@ -59,6 +62,7 @@ export default function KitchenAdmin() {
 
   return (
     <>
+      <div className="print:hidden">
       <PageHeader
         title="Cocina"
         subtitle="Bajas y conteos por autorizar, faltantes, preparaciones y rendimiento."
@@ -80,7 +84,8 @@ export default function KitchenAdmin() {
         }
       />
 
-      <div className="-mx-4 mb-5 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
+      </div>
+      <div className="-mx-4 mb-5 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0 print:hidden">
         {tabs.map((t) => {
           const Icon = t.icon;
           const active = tab === t.value;
@@ -103,6 +108,7 @@ export default function KitchenAdmin() {
       </div>
 
       {tab === 'pendientes' && <PendingTab wastes={pw} counts={pc} />}
+      {tab === 'hojas' && <KitchenSheets onFlow={setFlow} />}
       {tab === 'caja-cocina' && <ReconTab />}
       {tab === 'compras' && <ShoppingTab list={shop} />}
       {tab === 'preparaciones' && <PreparationsTab />}

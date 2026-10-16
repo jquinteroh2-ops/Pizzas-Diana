@@ -207,8 +207,8 @@ export function createApp(db: DB, opts: { secureCookies?: boolean; staticDir?: s
       from: qStr(req.query.from),
       to: qStr(req.query.to),
       preparationId: qNum(req.query.preparationId),
-      // La cocina ve lo suyo; el administrador, todo.
-      userId: users.can(req.user!, 'kitchen.manage') ? qNum(req.query.userId) : req.user!.id,
+      // Como la hoja de papel, la cocina ve lo que preparó todo el equipo.
+      userId: qNum(req.query.userId),
       limit: qNum(req.query.limit),
     }),
   ));
@@ -237,6 +237,7 @@ export function createApp(db: DB, opts: { secureCookies?: boolean; staticDir?: s
 
   // Conteos por ubicación.
   app.get('/api/counts/sheet', need('kitchen.use'), h((req) => counts.countSheet(db, qStr(req.query.location))));
+  app.get('/api/sheets/inventory', need('kitchen.use'), h((req) => counts.inventorySheet(db, req.user!, qStr(req.query.date) ?? localDate())));
   app.get('/api/counts/day', need('kitchen.use'), h((req) => counts.dayCountStatus(db, qStr(req.query.date) ?? localDate())));
   // Caja vs cocina: lo que descontaron las ventas frente a lo que se gastó según apertura y cierre.
   app.get('/api/reconciliation', need('kitchen.manage'), h((req) => counts.reconciliation(db, qStr(req.query.date) ?? localDate())));

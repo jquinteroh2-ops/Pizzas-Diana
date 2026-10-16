@@ -119,7 +119,7 @@ export function Layout({ current, children }: { current: RouteName; children: Re
   return (
     <div className="min-h-dvh">
       {/* Barra lateral (escritorio) */}
-      <aside className={cx('fixed inset-y-0 left-0 z-30 hidden w-72 flex-col gap-8 p-5 lg:flex', sidebarBg)}>
+      <aside className={cx('fixed inset-y-0 left-0 z-30 hidden w-72 flex-col gap-8 p-5 lg:flex print:hidden', sidebarBg)}>
         <div className="px-2 pt-2">
           <Logo light />
         </div>
@@ -128,7 +128,7 @@ export function Layout({ current, children }: { current: RouteName; children: Re
       </aside>
 
       {/* Barra superior (tablet y celular) */}
-      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-cream-300/60 bg-cream-100/90 px-4 py-3 backdrop-blur lg:hidden">
+      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-cream-300/60 bg-cream-100/90 px-4 py-3 backdrop-blur lg:hidden print:hidden">
         <Logo compact />
         <button className="btn-ghost p-2" onClick={() => setOpen(true)} aria-label="Abrir menú">
           <Menu className="size-6" />
@@ -152,9 +152,9 @@ export function Layout({ current, children }: { current: RouteName; children: Re
         </div>
       )}
 
-      <main className="pb-24 lg:pb-10 lg:pl-72">
+      <main className="pb-24 lg:pb-10 lg:pl-72 print:p-0">
         {session.demoMode && (
-          <div className="flex items-center justify-center gap-2 bg-violet-700 px-4 py-2 text-center text-xs font-medium text-white">
+          <div className="flex items-center justify-center gap-2 bg-violet-700 px-4 py-2 text-center text-xs font-medium text-white print:hidden">
             <FlaskConical className="size-4 shrink-0" />
             <span>
               <b>Modo demostración:</b> los datos son ficticios y todo lo que registres se marcará como DEMO.
@@ -173,7 +173,7 @@ export function Layout({ current, children }: { current: RouteName; children: Re
       </main>
 
       {/* Navegación inferior (celular) */}
-      <nav className="fixed inset-x-0 bottom-0 z-30 grid border-t border-cream-300 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden" style={{ gridTemplateColumns: `repeat(${bottom.length}, minmax(0, 1fr))` }}>
+      <nav className="fixed inset-x-0 bottom-0 z-30 grid print:hidden border-t border-cream-300 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden" style={{ gridTemplateColumns: `repeat(${bottom.length}, minmax(0, 1fr))` }}>
         {bottom.map((n) => {
           const Icon = n.icon;
           const active = n.name === current;

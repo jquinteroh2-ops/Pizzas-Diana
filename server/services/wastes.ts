@@ -51,8 +51,8 @@ export function getWaste(db: DB, id: number): WasteView {
 export function listWastes(db: DB, user: User, q: { status?: string; from?: string; to?: string; limit?: number }): WasteView[] {
   const where: string[] = [];
   const params: (string | number)[] = [];
-  // Quien no administra la cocina solo ve las bajas que reportó.
-  if (!can(user, 'kitchen.manage')) {
+  // Como la hoja de papel, la cocina ve las bajas de todo el equipo; la caja, solo las suyas.
+  if (!can(user, 'kitchen.use')) {
     where.push('w.reported_by = ?');
     params.push(user.id);
   }
@@ -78,7 +78,7 @@ export function listWastes(db: DB, user: User, q: { status?: string; from?: stri
 
 export function getWastePhoto(db: DB, user: User, id: number): { photo: string | null } {
   const w = getWaste(db, id);
-  if (!can(user, 'kitchen.manage') && w.reported_by !== user.id) throw notFound('Baja no encontrada.');
+  if (!can(user, 'kitchen.use') && w.reported_by !== user.id) throw notFound('Baja no encontrada.');
   const r = db.prepare('SELECT photo FROM wastes WHERE id = ?').get(id) as { photo: string | null };
   return { photo: r.photo };
 }

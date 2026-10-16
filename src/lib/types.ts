@@ -442,6 +442,28 @@ export interface ReconciliationLine {
   diff_m: number;
 }
 
+/** Hoja de inventario diario (como la de papel): Inicio | Entrada | Fin | Consumo. */
+export interface InventorySheetLine {
+  item_id: number;
+  name: string;
+  unit: Unit;
+  base_unit: BaseUnit;
+  pack_size_m: number;
+  pack_label: string;
+  open_m: number | null;
+  entries_m: number;
+  produced_m: number;
+  close_m: number | null;
+  consumption_m: number | null;
+  sales_m: number | null;
+  prev_close_m: number | null;
+}
+
+export interface InventorySheet {
+  date: string;
+  sections: (DayCountStatus & { lines: InventorySheetLine[] })[];
+}
+
 export interface Reconciliation {
   date: string;
   status: DayCountStatus[];
