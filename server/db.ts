@@ -7,7 +7,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdirSync } from 'node:fs';
 import pg from 'pg';
-import { PGlite } from '@electric-sql/pglite';
 
 export interface RunResult {
   lastInsertRowid: number;
@@ -171,6 +170,8 @@ function pgEngine(url: string): Engine {
 
 async function pgliteEngine(path: string): Promise<Engine> {
   if (path !== ':memory:') mkdirSync(path, { recursive: true });
+  // Se carga solo aquí: PGlite ocupa mucha memoria y en Render (con Neon) no se usa.
+  const { PGlite } = await import('@electric-sql/pglite');
   const lite = new PGlite(path === ':memory:' ? undefined : path, { parsers: { 20: toNumber, 1700: toNumber } });
   await lite.waitReady;
   // PGlite tiene una sola conexión: mientras corre una transacción, las demás consultas

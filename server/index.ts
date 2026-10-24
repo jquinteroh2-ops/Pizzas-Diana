@@ -8,6 +8,13 @@ const PORT = Number(process.env.PORT ?? 3001);
 const DB_TARGET = process.env.DATABASE_URL || resolve(process.env.DB_PATH ?? 'data/pglite');
 const production = process.env.NODE_ENV === 'production' || process.argv.includes('--prod');
 
+// En producción los datos van en Neon. Sin DATABASE_URL no se arranca: PGlite no cabe en la
+// memoria del plan gratis de Render y además ahí se borraría todo al reiniciar.
+if (production && !process.env.DATABASE_URL && process.env.ALLOW_LOCAL_DB !== '1') {
+  console.error('Falta la variable DATABASE_URL (la dirección de conexión de Neon). Agrégala en Render → Environment.');
+  process.exit(1);
+}
+
 const db = await openDb(DB_TARGET);
 const app = createApp(db, {
   secureCookies: production && process.env.INSECURE_COOKIES !== '1',
