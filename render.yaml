@@ -1,14 +1,15 @@
 # Despliegue en Render (https://render.com) como «Blueprint».
 # En Render: New → Blueprint → elegir este repositorio. Render lee este archivo y crea el servicio.
 #
-# IMPORTANTE: la base de datos es un archivo SQLite. Necesita un disco persistente (abajo, «disk»),
-# y Render solo da discos en los planes pagos (Starter en adelante). En el plan gratis el disco se
-# borra cada vez que el servicio se reinicia o se vuelve a desplegar: se perderían las ventas.
+# Plan GRATIS. OJO: la base de datos es un archivo SQLite y en el plan gratis el disco NO es
+# persistente: cuando el servicio se duerme (15 min sin visitas), se reinicia o se vuelve a
+# desplegar, se borran los datos. Para guardar las ventas de verdad hace falta un disco
+# (plan Starter + «disk») o una base de datos externa.
 services:
   - type: web
     name: pizza-diana
     runtime: node
-    plan: starter
+    plan: free
     # Con NODE_ENV=production npm no instala TypeScript ni Vite, que hacen falta para compilar.
     buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
@@ -18,9 +19,3 @@ services:
         value: '24'
       - key: NODE_ENV
         value: production
-      - key: DB_PATH
-        value: /var/data/pizza-diana.db
-    disk:
-      name: datos
-      mountPath: /var/data
-      sizeGB: 1
