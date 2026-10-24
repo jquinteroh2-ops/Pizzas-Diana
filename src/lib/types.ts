@@ -1,8 +1,11 @@
 import type { BaseUnit, StockStatus, Unit } from '../../shared/units.ts';
 import type { Role, ExtraPerm } from '../../shared/permissions.ts';
 import type {
+  CountDetail,
   CountKind,
   CountStatus,
+  MovementType,
+  Portion,
   ItemKind,
   Location,
   PrepMode,
@@ -12,7 +15,7 @@ import type {
   WasteStatus,
 } from '../../shared/kitchen.ts';
 
-export type { Role, ExtraPerm };
+export type { Role, ExtraPerm, CountDetail, MovementType, Portion };
 
 export interface User {
   id: number;
@@ -62,6 +65,7 @@ export interface Item {
   location: Location;
   pack_size_m: number;
   pack_label: string;
+  portions: Portion[];
   sort_order: number;
   active: boolean;
   is_demo: boolean;
@@ -69,7 +73,6 @@ export interface Item {
   updated_at: string;
 }
 
-export type MovementType = 'inicial' | 'entrada' | 'ajuste' | 'venta' | 'anulacion' | 'produccion' | 'baja' | 'conteo';
 
 export interface Movement {
   id: number;
@@ -351,6 +354,7 @@ export interface CountSheetLine {
   qty_m: number;
   pack_size_m: number;
   pack_label: string;
+  portions: Portion[];
   kind: ItemKind;
 }
 
@@ -367,6 +371,7 @@ export interface CountLine {
   expected_m: number;
   counted_m: number;
   diff_m: number;
+  detail: CountDetail | null;
 }
 
 export interface Count {
@@ -436,6 +441,7 @@ export interface ReconciliationLine {
   produced_m: number;
   used_m: number;
   waste_m: number;
+  trim_m: number;
   close_m: number;
   real_m: number;
   sales_m: number;
@@ -446,11 +452,16 @@ export interface ReconciliationLine {
 export interface InventorySheetLine {
   item_id: number;
   name: string;
+  category: string;
   unit: Unit;
   base_unit: BaseUnit;
   pack_size_m: number;
   pack_label: string;
+  portions: Portion[];
   open_m: number | null;
+  open_detail: CountDetail | null;
+  close_detail: CountDetail | null;
+  prev_close_detail: CountDetail | null;
   entries_m: number;
   produced_m: number;
   close_m: number | null;
@@ -479,4 +490,25 @@ export interface KitchenReport {
   wastesCount: number;
   entries: { item_id: number; name: string; unit: Unit; base_unit: BaseUnit; count: number; total_m: number }[];
   countDiffs: { item_id: number; name: string; unit: Unit; base_unit: BaseUnit; count: number; diff_m: number }[];
+}
+
+/** Un porcionado: la cocina partió un insumo en porciones. Solo se descontó la merma. */
+export interface Portioning {
+  id: number;
+  item_id: number;
+  item_name: string;
+  unit: Unit;
+  base_unit: BaseUnit;
+  lines: { label: string; size_m: number; n: number }[];
+  output_m: number;
+  merma_m: number;
+  yield_pct: number | null;
+  note: string;
+  status: 'activa' | 'anulada';
+  user_id: number;
+  user_name: string;
+  created_at: string;
+  local_date: string;
+  annul_reason: string | null;
+  is_demo: number;
 }

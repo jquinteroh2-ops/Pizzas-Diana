@@ -9,7 +9,7 @@ import type { Count, CountSheet, CountSheetLine, DayCountStatus, Item } from '..
 import { useToast } from '../toast';
 import { Modal, Loading, ErrorBox, EmptyState, Segmented, Field, cx } from '../ui';
 import { formatQty, niceUnit, toMilli, UNIT_SHORT, type BaseUnit, type Unit } from '../../../shared/units.ts';
-import { COUNT_KINDS, COUNT_KIND_LABELS, LOCATIONS, formatPacks, type CountKind, type Location } from '../../../shared/kitchen.ts';
+import { COUNT_KINDS, COUNT_KIND_LABELS, LOCATIONS, formatPacks, presentationText, type CountKind, type Location } from '../../../shared/kitchen.ts';
 import { formatTime } from '../../../shared/dates.ts';
 import { LOCATION_ICONS, parseQty, validQty } from './helpers';
 
@@ -114,7 +114,7 @@ function CountSheetForm({ location, kind, onBack, onSent }: { location: Location
   const toast = useToast();
   const sheet = useApi<CountSheet>(`/counts/sheet?location=${encodeURIComponent(location)}`, [location]);
   const [scale, setScale] = useState<Scale>('pequena');
-  const [values, setValues] = useState<Record<number, { packs: string; loose: string }>>({});
+  const [values, setValues] = useState<Record<number, { packs: string; portions: string[]; loose: string }>>({});
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const admin = can('kitchen.manage');
@@ -123,16 +123,25 @@ function CountSheetForm({ location, kind, onBack, onSent }: { location: Location
     const v = values[l.item_id];
     if (!v) return null;
     const hasPacks = l.pack_size_m > 0 && validQty(v.packs, true);
+    const portions = l.portions.map((p, i) => (validQty(v.portions[i] ?? '', true) ? Math.round(parseQty(v.portions[i])) * p.size_m : null));
     const hasLoose = validQty(v.loose, true);
-    if (!hasPacks && !hasLoose) return null;
-    return (hasPacks ? Math.round(parseQty(v.packs) * l.pack_size_m) : 0) + (hasLoose ? toMilli(parseQty(v.loose), looseUnit(l.base_unit, scale)) : 0);
+    if (!hasPacks && !hasLoose && portions.every((x) => x === null)) return null;
+    return (
+      (hasPacks ? Math.round(parseQty(v.packs) * l.pack_size_m) : 0) +
+      portions.reduce<number>((sum, x) => sum + (x ?? 0), 0) +
+      (hasLoose ? toMilli(parseQty(v.loose), looseUnit(l.base_unit, scale)) : 0)
+    );
   };
 
   const lines = sheet.data?.lines ?? [];
   const filled = lines.filter((l) => countedM(l) !== null).length;
 
-  const set = (id: number, k: 'packs' | 'loose', v: string) =>
-    setValues((s) => ({ ...s, [id]: { ...(s[id] ?? { packs: '', loose: '' }), [k]: v.replace(/[^0-9.,]/g, '') } }));
+  const set = (l: CountSheetLine, k: 'packs' | 'loose' | number, v: string) =>
+    setValues((s) => {
+      const cur = s[l.item_id] ?? { packs: '', portions: l.portions.map(() => ''), loose: '' };
+      const clean = v.replace(/[^0-9.,]/g, '');
+      return { ...s, [l.item_id]: typeof k === 'number' ? { ...cur, portions: cur.portions.map((p, i) => (i === k ? clean : p)) } : { ...cur, [k]: clean } };
+    });
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -145,7 +154,13 @@ function CountSheetForm({ location, kind, onBack, onSent }: { location: Location
         lines: lines
           .map((l) => ({ l, m: countedM(l) }))
           .filter((x) => x.m !== null)
-          .map(({ l, m }) => ({ item_id: l.item_id, qty: m! / 1000, unit: l.base_unit === 'g' ? 'g' : l.base_unit === 'ml' ? 'ml' : 'unidad' })),
+          // Paquetes + porciones + suelto (el suelto ya convertido a g/ml/und): el servidor guarda el desglose.
+          .map(({ l }) => {
+            const v = values[l.item_id]!;
+            const lu = looseUnit(l.base_unit, scale);
+            const loose = validQty(v.loose, true) ? toMilli(parseQty(v.loose), lu) / 1000 : undefined;
+            return { item_id: l.item_id, packs: v.packs || undefined, portions: v.portions.map((p) => (p ? parseQty(p) : 0)), loose };
+          }),
       };
       const c = await api.post<Count>('/counts', body);
       bump();
@@ -188,7 +203,10 @@ function CountSheetForm({ location, kind, onBack, onSent }: { location: Location
             <li key={l.item_id} className={cx('px-3 py-3 sm:px-4', m !== null && 'bg-emerald-50/40')}>
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="font-semibold text-ink-900">{l.name}</p>
+                  <p className="font-semibold text-ink-900">
+                    {l.name}
+                    {presentationText(l) && <span className="ml-1.5 text-xs font-medium text-ink-500">· {presentationText(l)}</span>}
+                  </p>
                   {admin && (
                     <p className="text-xs text-ink-500">
                       Sistema: {formatPacks(l.qty_m, l.pack_size_m, l.pack_label, l.unit) ?? formatQty(l.qty_m, l.unit)}
@@ -204,25 +222,38 @@ function CountSheetForm({ location, kind, onBack, onSent }: { location: Location
                 </div>
                 {m !== null && <CheckCircle2 className="size-5 shrink-0 text-emerald-600" />}
               </div>
-              <div className="mt-2 flex items-center gap-2">
+              <div className="mt-2 flex flex-wrap items-center gap-2">
                 {l.pack_size_m > 0 && (
                   <>
                     <input
                       className="input w-20 text-center tabular-nums"
                       inputMode="decimal"
                       value={values[l.item_id]?.packs ?? ''}
-                      onChange={(e) => set(l.item_id, 'packs', e.target.value)}
+                      onChange={(e) => set(l, 'packs', e.target.value)}
                       placeholder="0"
                       aria-label={`${l.name}: ${l.pack_label}s`}
                     />
                     <span className="text-xs font-semibold text-ink-500">{l.pack_label}s +</span>
                   </>
                 )}
+                {l.portions.map((p, i) => (
+                  <span key={p.label} className="flex items-center gap-2">
+                    <input
+                      className="input w-20 text-center tabular-nums"
+                      inputMode="numeric"
+                      value={values[l.item_id]?.portions[i] ?? ''}
+                      onChange={(e) => set(l, i, e.target.value)}
+                      placeholder="0"
+                      aria-label={`${l.name}: ${p.label}`}
+                    />
+                    <span className="text-xs font-semibold text-ink-500">{p.label} +</span>
+                  </span>
+                ))}
                 <input
                   className="input w-28 tabular-nums"
                   inputMode="decimal"
                   value={values[l.item_id]?.loose ?? ''}
-                  onChange={(e) => set(l.item_id, 'loose', e.target.value)}
+                  onChange={(e) => set(l, 'loose', e.target.value)}
                   placeholder="0"
                   aria-label={`${l.name}: ${UNIT_SHORT[lu]} sueltos`}
                 />

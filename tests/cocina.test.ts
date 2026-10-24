@@ -279,12 +279,12 @@ test('20. catálogo Pizza Diana: carga productos, preparaciones y menú sin dupl
   const { db, admin } = setup();
   const first = kitchen.loadCatalog(db, admin);
   assert.ok(first.items > 40);
-  assert.equal(first.preparations, 8);
+  assert.equal(first.preparations, 11);
   assert.ok(first.products >= 10);
   assert.ok(inv.listItems(db).every((i) => i.qty_m === 0));
   const cebolla = inv.listItems(db).find((i) => i.name === 'Cebolla')!;
-  // La cebolla sirve para dos preparaciones.
-  assert.equal(preps.listPreparations(db).filter((p) => p.inputs[0].item_id === cebolla.id).length, 2);
+  // La cebolla es la base de tres preparaciones (caramelizada, picada y el adobo).
+  assert.equal(preps.listPreparations(db).filter((p) => p.inputs[0].item_id === cebolla.id).length, 3);
   const again = kitchen.loadCatalog(db, admin);
   assert.deepEqual(again, { items: 0, preparations: 0, products: 0 });
 });
@@ -322,7 +322,7 @@ test('21. migración: una base de la versión anterior conserva sus datos y «em
     old.close();
 
     const db = openDb(path);
-    assert.equal((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version, 2);
+    assert.equal((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version, 3);
     const rafa = users.getUser(db, 2);
     assert.equal(rafa.role, 'caja');
     assert.deepEqual(rafa.perms, ['entradas']);

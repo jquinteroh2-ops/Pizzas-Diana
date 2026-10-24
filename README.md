@@ -34,7 +34,7 @@ Abre tu navegador en: **`http://localhost:3001`**
 
 ## 🧪 Pruebas y Validación
 
-El proyecto incluye 25 pruebas automatizadas con `node:test` que verifican cada regla de negocio, seguridad y persistencia:
+El proyecto incluye 33 pruebas automatizadas con `node:test` que verifican cada regla de negocio, seguridad y persistencia:
 ```bash
 # Ejecutar suite de pruebas
 npm test
@@ -107,7 +107,7 @@ npm run lint
    - Sesiones autenticadas protegidas contra CSRF y fuerza bruta.
 
 8. **Hojas** (el sistema funciona como los formatos de papel de Pizza Diana, para no aprender nada nuevo):
-   - El menú empieza por las hojas: **Inventario diario** (Producto | Inicio | Entrada | Fin | Consumo, por nevera), **Ventas del día**, **Merma**, **Masa de pizza** y **Bajas**. El administrador y la cocina entran directo a «Inventario diario»; la caja, a «Registrar venta».
+   - El menú empieza por las hojas: **Inventario diario** (Producto | Inicio | Entrada | Fin | Consumo, por nevera), **Recibir pedido**, **Porcionado**, **Bebidas**, **Ventas del día**, **Merma**, **Masa y recetas** y **Bajas**. El administrador y la cocina entran directo a «Inventario diario»; la caja, a «Registrar venta».
    - Se llenan en la misma tabla, se imprimen con el mismo formato y el administrador autoriza ahí mismo (Aprobar/Rechazar en Bajas, «Revisar inicio/fin» en Inventario diario).
    - Tablero, Más vendidos, Reportes, Plan, Inventario, Productos, Usuarios y Configuración quedan en «Más».
 
@@ -124,7 +124,25 @@ npm run lint
 10. **Modo Demostración (DEMO)**:
    - Usa el catálogo real de Pizza Diana con 5 semanas de ventas, preparaciones, bajas, conteos y faltantes.
    - Marcador `is_demo` que permite restablecer o eliminar todos los datos de prueba en 1 clic.
-   - En GitHub Pages no hay servidor: los datos viven en el navegador de cada dispositivo (`src/lib/browserStorage.ts`) y la pantalla de entrada ofrece botones para probar cada rol (clave `demo1234`). Para que cocina, caja y administrador compartan datos hay que publicar el servidor (`npm start`, p. ej. en Railway).
+   - Sin servidor (abriendo el archivo compilado), los datos viven en el navegador de cada dispositivo (`src/lib/browserStorage.ts`) y la pantalla de entrada ofrece botones para probar cada rol (clave `demo1234`). Para que cocina, caja y administrador compartan datos se usa el servidor publicado en Render (ver abajo).
+
+11. **Presentaciones, porciones y unidades** (cómo se trabaja en Pizza Diana):
+   - **Dos formas de controlar**: por **unidad** (butifarra, chorizo, salchichas, panes, bebidas) o por **peso en gramos** (quesos, carnes, papas). Las recetas descuentan igual: la salchipapa para 2 lleva 2 salchichas; la picada de 21, 2 butifarras y 1 chorizo; la de 40, 2 chorizos y 2 butifarras.
+   - **Cómo viene**: cada artículo dice al lado del nombre cómo lo trae el proveedor («paquete × 10 und», «bloque × 2.500 g», «paca × 12 und»). Al recibir y al contar se escribe en paquetes y el sistema multiplica.
+   - **Porciones**: la pechuga, el cerdo y las papas tienen porciones (porción picada 80 g, porción asado 300 g…). **Siguen siendo el mismo artículo**: porcionar no duplica el inventario ni obliga a contar entrada y salida; solo se descuenta la merma que se bota. Al contar se escribe «2 paquetes + 12 porciones picada + 140 g» y queda guardado así.
+   - **Quesos en gramos**: no se porcionan (en la plancha se mezclaban y quedaban porciones con gramos de más). Se ven los bloques cerrados y cuánto lleva consumido el abierto.
+   - **Recibir pedido**: muestra lo que se pidió (faltantes y lo que está bajo el mínimo); se escribe lo que llegó y entra todo junto, cerrando los faltantes.
+   - **Día de recetas** (martes en el plan): carne molida, salsa de pizza, salsa de la casa, salsa de piña, adobo y piña en trocitos son preparaciones que descuentan sus insumos. Las cantidades son sugeridas: revisarlas con el dueño.
+   - **Bebidas**: hoja diaria con inicio + entrada − vendido = lo que debe quedar, frente al conteo final. Todo va por unidad, así que cualquier faltante sale a la vista.
+
+---
+
+## ☁️ Publicar en Render
+
+El repositorio trae `render.yaml`. En Render: **New → Blueprint**, elegir este repositorio y confirmar. Render compila (`npm ci --include=dev && npm run build`) y arranca con `npm start`.
+
+- La base de datos es un archivo SQLite guardado en un **disco persistente** (`/var/data`). Render solo ofrece discos en planes pagos (Starter): en el plan gratis el disco se borra con cada reinicio y se perderían los datos.
+- Al abrir la dirección por primera vez aparece la **Configuración inicial** para crear el administrador.
 
 > Las bases creadas con la versión anterior se migran solas al arrancar (PRAGMA `user_version`): el rol «empleado» pasa a «caja» y no se pierde nada.
 

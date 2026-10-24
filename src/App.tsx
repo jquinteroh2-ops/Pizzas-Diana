@@ -17,10 +17,13 @@ import SettingsPage from './pages/Settings';
 import Kitchen from './pages/Kitchen';
 import PrepPlan from './pages/PrepPlan';
 import TopSellers from './pages/TopSellers';
-import { HojaBajas, HojaInventario, HojaMasa, HojaMerma, HojaVentas } from './pages/SheetPages';
+import { HojaBajas, HojaInventario, HojaMasa, HojaMerma, HojaVentas, HojaEntradas, HojaPorcionado, HojaBebidas } from './pages/SheetPages';
 
 const PAGES: Record<RouteName, () => React.JSX.Element> = {
   'hoja-inventario': HojaInventario,
+  'hoja-entradas': HojaEntradas,
+  'hoja-porcionado': HojaPorcionado,
+  'hoja-bebidas': HojaBebidas,
   'hoja-ventas': HojaVentas,
   'hoja-merma': HojaMerma,
   'hoja-masa': HojaMasa,

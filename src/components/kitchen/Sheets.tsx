@@ -5,13 +5,13 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { ChevronLeft, ChevronRight, Printer, Pencil, Copy, Loader2, Camera, Plus } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useApi, useApp } from '../../lib/app';
-import type { InventorySheet, InventorySheetLine, PeriodReport, Preparation, Production, Waste } from '../../lib/types';
+import type { InventorySheet, InventorySheetLine, Item, Movement, PeriodReport, Portioning, Preparation, Production, Shortage, Waste } from '../../lib/types';
 import { useToast } from '../toast';
 import { Loading, ErrorBox, Modal, cx } from '../ui';
 import { CountReview, RejectWaste } from './Review';
 import { WastePhoto } from './ReportFlows';
 import { formatNumber, formatQty, fromMilli, niceUnit, toMilli, UNIT_SHORT, baseOf, type BaseUnit, type Unit } from '../../../shared/units.ts';
-import { formatPacks, WASTE_REASON_LABELS, type Location } from '../../../shared/kitchen.ts';
+import { detailText, formatPacks, presentationText, WASTE_REASON_LABELS, type CountDetail, type Location } from '../../../shared/kitchen.ts';
 import { addDays, daysBetween, formatTime, localDate, shortDate, shortDateDow, weekEnd, weekStart } from '../../../shared/dates.ts';
 import type { Flow } from './FlowHost';
 import { parseQty, smallUnit, validQty } from './helpers';
@@ -89,9 +89,10 @@ function WeekNav({ from, setDate }: { from: string; setDate: (d: string) => void
   );
 }
 
-/** Cantidad como en la hoja: «3 paq + 385 g» o «1,2 kg». Vacío si no hay dato. */
-function qtyText(m: number | null, l: { unit: Unit; base_unit: BaseUnit; pack_size_m: number; pack_label: string }) {
+/** Cantidad como en la hoja: «3 paq + 12 porción picada + 385 g» o «1,2 kg». Vacío si no hay dato. */
+function qtyText(m: number | null, l: { unit: Unit; base_unit: BaseUnit; pack_size_m: number; pack_label: string }, detail?: CountDetail | null) {
   if (m === null) return '';
+  if (detail) return detailText(detail, l.base_unit);
   if (l.pack_size_m > 0) return formatPacks(m, l.pack_size_m, l.pack_label === 'paquete' ? 'paq' : l.pack_label, l.unit) ?? '';
   return formatQty(m, niceUnit(m, l.base_unit));
 }
@@ -99,25 +100,47 @@ function qtyText(m: number | null, l: { unit: Unit; base_unit: BaseUnit; pack_si
 // ---------- 1. Inventario diario ----------
 
 type Edit = { location: Location; kind: 'apertura' | 'cierre' } | null;
-type Cell = { packs: string; loose: string };
+/** Lo que se escribe por producto: paquetes cerrados + cada porción + suelto (o el abierto). */
+type Cell = { packs: string; portions: string[]; loose: string };
 
-function toCell(m: number, l: InventorySheetLine): Cell {
+const emptyCell = (l: InventorySheetLine): Cell => ({ packs: '', portions: l.portions.map(() => ''), loose: '' });
+
+/** Vuelve a poner en las casillas lo que ya se contó (para corregir o copiar el fin de ayer). */
+function toCell(m: number, l: InventorySheetLine, d: CountDetail | null): Cell {
   const u = smallUnit(l.base_unit);
-  if (l.pack_size_m > 0) {
+  const cell = emptyCell(l);
+  let rest = m;
+  if (d && d.pack_size_m === l.pack_size_m) {
+    if (d.packs > 0) cell.packs = String(d.packs);
+    rest -= Math.round(d.packs * l.pack_size_m);
+    l.portions.forEach((p, i) => {
+      const x = d.portions.find((q) => q.label === p.label && q.size_m === p.size_m);
+      if (x) {
+        cell.portions[i] = String(x.n);
+        rest -= x.n * x.size_m;
+      }
+    });
+  } else if (l.pack_size_m > 0) {
     const packs = Math.floor(m / l.pack_size_m);
-    const rest = m - packs * l.pack_size_m;
-    return { packs: packs ? String(packs) : '', loose: rest ? String(fromMilli(rest, u)) : packs ? '' : '0' };
+    if (packs) cell.packs = String(packs);
+    rest -= packs * l.pack_size_m;
   }
-  return { packs: '', loose: String(fromMilli(m, u)) };
+  cell.loose = rest > 0 ? String(fromMilli(rest, u)) : cell.packs || cell.portions.some(Boolean) ? '' : '0';
+  return cell;
 }
 
 function cellMilli(c: Cell | undefined, l: InventorySheetLine): number | null {
   if (!c) return null;
   const hasP = l.pack_size_m > 0 && validQty(c.packs, true);
+  const portions = l.portions.map((p, i) => (validQty(c.portions[i] ?? '', true) ? Math.round(parseQty(c.portions[i])) * p.size_m : null));
   const hasL = validQty(c.loose, true);
-  if (!hasP && !hasL) return null;
-  return (hasP ? Math.round(parseQty(c.packs) * l.pack_size_m) : 0) + (hasL ? toMilli(parseQty(c.loose), smallUnit(l.base_unit)) : 0);
+  if (!hasP && !hasL && portions.every((x) => x === null)) return null;
+  return (
+    (hasP ? Math.round(parseQty(c.packs) * l.pack_size_m) : 0) + portions.reduce<number>((sum, x) => sum + (x ?? 0), 0) + (hasL ? toMilli(parseQty(c.loose), smallUnit(l.base_unit)) : 0)
+  );
 }
+
+const CELL_INPUT = 'w-11 rounded-md border border-ink-400 px-1 py-1 text-center text-sm tabular-nums focus:border-brand-500 focus:outline-none';
 
 export function InventoryDaySheet() {
   const { can, bump } = useApp();
@@ -136,7 +159,8 @@ export function InventoryDaySheet() {
     const next: Record<number, Cell> = {};
     for (const l of lines) {
       const m = from === 'prev' ? l.prev_close_m : kind === 'apertura' ? l.open_m : l.close_m;
-      if (m !== null) next[l.item_id] = toCell(m, l);
+      const d = from === 'prev' ? l.prev_close_detail : kind === 'apertura' ? l.open_detail : l.close_detail;
+      if (m !== null) next[l.item_id] = toCell(m, l, d);
     }
     setCells(next);
     setEdit({ location, kind });
@@ -154,7 +178,11 @@ export function InventoryDaySheet() {
       await api.post('/counts', {
         location: edit.location,
         kind: edit.kind,
-        lines: filled.map(({ l, m }) => ({ item_id: l.item_id, qty: m! / 1000, unit: smallUnit(l.base_unit) })),
+        // Se manda el desglose (paquetes + porciones + suelto): así la hoja lo muestra igual que se contó.
+        lines: filled.map(({ l }) => {
+          const c = cells[l.item_id]!;
+          return { item_id: l.item_id, packs: c.packs || undefined, portions: c.portions.map((p) => p || 0), loose: c.loose || undefined };
+        }),
       });
       toast.success(
         edit.kind === 'apertura' ? 'Inicio guardado' : 'Fin guardado',
@@ -169,8 +197,13 @@ export function InventoryDaySheet() {
     }
   };
 
-  const setCell = (id: number, k: keyof Cell, v: string) =>
-    setCells((s) => ({ ...s, [id]: { ...(s[id] ?? { packs: '', loose: '' }), [k]: v.replace(/[^0-9.,]/g, '') } }));
+  const setCell = (l: InventorySheetLine, k: 'packs' | 'loose' | number, v: string) =>
+    setCells((s) => {
+      const cur = s[l.item_id] ?? emptyCell(l);
+      const clean = v.replace(/[^0-9.,]/g, '');
+      const next = typeof k === 'number' ? { ...cur, portions: cur.portions.map((p, i) => (i === k ? clean : p)) } : { ...cur, [k]: clean };
+      return { ...s, [l.item_id]: next };
+    });
 
   return (
     <Paper
@@ -265,37 +298,56 @@ export function InventoryDaySheet() {
                       {s.lines.map((l) => {
                         const editCell = (kind: 'apertura' | 'cierre') =>
                           editing === kind ? (
-                            <div className="flex items-center justify-center gap-1">
+                            <div className="flex flex-wrap items-center justify-center gap-1">
                               {l.pack_size_m > 0 && (
                                 <>
                                   <input
-                                    className="w-11 rounded-md border border-ink-400 px-1 py-1 text-center text-sm tabular-nums focus:border-brand-500 focus:outline-none"
+                                    className={CELL_INPUT}
                                     inputMode="decimal"
                                     value={cells[l.item_id]?.packs ?? ''}
-                                    onChange={(e) => setCell(l.item_id, 'packs', e.target.value)}
+                                    onChange={(e) => setCell(l, 'packs', e.target.value)}
                                     placeholder="0"
-                                    aria-label={`${l.name}: paquetes`}
+                                    aria-label={`${l.name}: ${l.pack_label || 'paquetes'} cerrados`}
                                   />
-                                  <span className="text-[11px] text-ink-500">paq +</span>
+                                  <span className="text-[11px] text-ink-500">{l.pack_label === 'paquete' ? 'paq' : l.pack_label} +</span>
                                 </>
                               )}
+                              {l.portions.map((p, i) => (
+                                <span key={p.label} className="flex items-center gap-1">
+                                  <input
+                                    className={CELL_INPUT}
+                                    inputMode="numeric"
+                                    value={cells[l.item_id]?.portions[i] ?? ''}
+                                    onChange={(e) => setCell(l, i, e.target.value)}
+                                    placeholder="0"
+                                    aria-label={`${l.name}: ${p.label}`}
+                                  />
+                                  <span className="text-[11px] text-ink-500">{p.label} +</span>
+                                </span>
+                              ))}
                               <input
-                                className="w-16 rounded-md border border-ink-400 px-1 py-1 text-center text-sm tabular-nums focus:border-brand-500 focus:outline-none"
+                                className={cx(CELL_INPUT, 'w-16')}
                                 inputMode="decimal"
                                 value={cells[l.item_id]?.loose ?? ''}
-                                onChange={(e) => setCell(l.item_id, 'loose', e.target.value)}
+                                onChange={(e) => setCell(l, 'loose', e.target.value)}
                                 placeholder="0"
-                                aria-label={`${l.name}: ${UNIT_SHORT[smallUnit(l.base_unit)]}`}
+                                aria-label={`${l.name}: ${UNIT_SHORT[smallUnit(l.base_unit)]} sueltos`}
                               />
-                              <span className="text-[11px] text-ink-500">{UNIT_SHORT[smallUnit(l.base_unit)]}</span>
+                              <span className="text-[11px] text-ink-500">
+                                {UNIT_SHORT[smallUnit(l.base_unit)]}
+                                {l.pack_size_m > 0 && l.base_unit !== 'unidad' ? ' (abierto)' : ''}
+                              </span>
                             </div>
                           ) : (
-                            qtyText(kind === 'apertura' ? l.open_m : l.close_m, l)
+                            qtyText(kind === 'apertura' ? l.open_m : l.close_m, l, kind === 'apertura' ? l.open_detail : l.close_detail)
                           );
                         const over = admin && l.consumption_m !== null && l.sales_m !== null && l.sales_m > 0 && l.consumption_m > l.sales_m * 1.05;
                         return (
                           <tr key={l.item_id} className="odd:bg-white even:bg-cream-50/60">
-                            <td className={cx(TD, 'font-semibold')}>{l.name}</td>
+                            <td className={cx(TD, 'font-semibold')}>
+                              {l.name}
+                              {presentationText(l) && <span className="block text-[10px] font-normal text-ink-500">{presentationText(l)}</span>}
+                            </td>
                             <td className={cx(TD, 'text-center tabular-nums', editing === 'apertura' && 'bg-amber-50 p-1')}>{editCell('apertura')}</td>
                             <td className={cx(TD, 'text-center tabular-nums')}>{l.entries_m ? qtyText(l.entries_m, l) : ''}</td>
                             <td className={cx(TD, 'text-center tabular-nums', editing === 'cierre' && 'bg-amber-50 p-1')}>{editCell('cierre')}</td>
@@ -315,7 +367,7 @@ export function InventoryDaySheet() {
             );
           })}
           <p className="text-[11px] text-ink-500">
-            Consumo = inicio + entrada + lo preparado − fin. {admin && 'En rojo: se gastó más de 5 % por encima de lo vendido según las recetas.'}
+            Cada producto se cuenta una sola vez: paquetes cerrados + porciones + lo suelto (o lo que queda del abierto). Consumo = inicio + entrada + lo preparado − fin. {admin && 'En rojo: se gastó más de 5 % por encima de lo vendido según las recetas.'}
           </p>
         </div>
       )}
@@ -453,14 +505,14 @@ export function MasaSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
 
   return (
     <Paper
-      title="Masa de pizza"
+      title="Masa y recetas"
       subtitle={`Semana del ${shortDate(from)} al ${shortDate(addDays(from, 6))}`}
       nav={<WeekNav from={from} setDate={setDate} />}
       actions={
         can('kitchen.use') &&
         batches[0] && (
           <button className="btn-primary btn-sm" onClick={() => onFlow({ kind: 'preparar', prepId: batches[0].id })}>
-            <Plus className="size-4" /> Registrar lote
+            <Plus className="size-4" /> Registrar receta
           </button>
         )
       }
@@ -772,6 +824,444 @@ export function VentasSheet() {
             </table>
             <p className="mt-1 text-[11px] text-ink-500">Según la receta de cada producto. Se descuenta solo, en cada venta.</p>
           </div>
+        </div>
+      )}
+    </Paper>
+  );
+}
+
+// ---------- 6. Recibir pedido (entradas de mercancía) ----------
+
+type EntryCell = { packs: string; loose: string };
+
+/**
+ * Lo que se pidió (faltantes y lo que está bajo el mínimo) con casillas para escribir lo que
+ * llegó TAL COMO VIENE: «3 paquetes». El sistema multiplica y todo entra de una vez.
+ */
+export function EntradasSheet() {
+  const { can, bump } = useApp();
+  const toast = useToast();
+  const today = localDate();
+  const [date, setDate] = useState(today);
+  const items = useApi<Item[]>('/kitchen/items');
+  const open = useApi<Shortage[]>('/shortages?scope=open');
+  const movs = useApi<Movement[]>('/movements?type=entrada&limit=1000', [date]);
+  const [cells, setCells] = useState<Record<number, EntryCell>>({});
+  const [extra, setExtra] = useState<number[]>([]);
+  const [supplier, setSupplier] = useState('');
+  const [busy, setBusy] = useState(false);
+  const canFill = can('inventory.entry') && date === today;
+
+  const byId = useMemo(() => new Map((items.data ?? []).map((i) => [i.id, i])), [items.data]);
+  const shortageOf = useMemo(() => new Map((open.data ?? []).map((s) => [s.item_id, s])), [open.data]);
+  // Lo pedido: faltantes reportados + lo que está bajo el mínimo, más lo que se agregue a mano.
+  const rows = useMemo(() => {
+    const ids = new Set<number>([...(open.data ?? []).map((s) => s.item_id), ...(items.data ?? []).filter((i) => i.status !== 'disponible').map((i) => i.id), ...extra]);
+    return [...ids]
+      .map((id) => byId.get(id))
+      .filter((i): i is Item => !!i)
+      .sort((a, b) => a.location.localeCompare(b.location) || a.name.localeCompare(b.name, 'es'));
+  }, [open.data, items.data, extra, byId]);
+
+  const milli = (i: Item) => {
+    const c = cells[i.id];
+    if (!c) return 0;
+    const p = i.pack_size_m > 0 && validQty(c.packs, true) ? Math.round(parseQty(c.packs) * i.pack_size_m) : 0;
+    const l = validQty(c.loose, true) ? toMilli(parseQty(c.loose), smallUnit(i.base_unit)) : 0;
+    return p + l;
+  };
+  const filled = rows.filter((i) => milli(i) > 0);
+  const set = (id: number, k: keyof EntryCell, v: string) =>
+    setCells((s) => ({ ...s, [id]: { ...(s[id] ?? { packs: '', loose: '' }), [k]: v.replace(/[^0-9.,]/g, '') } }));
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await api.post('/entries', {
+        reason: supplier.trim() ? `Recepción de pedido · ${supplier.trim()}` : 'Recepción de pedido',
+        lines: filled.map((i) => ({ item_id: i.id, packs: cells[i.id]?.packs || undefined, qty: cells[i.id]?.loose || undefined, unit: smallUnit(i.base_unit) })),
+      });
+      toast.success('Pedido recibido', `${filled.length} productos entraron al inventario. Los faltantes de lo que llegó quedaron cerrados.`);
+      setCells({});
+      setExtra([]);
+      bump();
+    } catch (e) {
+      toast.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const dayEntries = (movs.data ?? []).filter((m) => localDate(new Date(m.created_at)) === date).sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const addable = (items.data ?? []).filter((i) => !rows.some((r) => r.id === i.id)).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+
+  return (
+    <Paper
+      title="Recibir pedido"
+      subtitle={date === today ? `Hoy, ${shortDateDow(date)}` : shortDateDow(date)}
+      nav={<DayNav date={date} setDate={setDate} />}
+      note="Se cuenta lo que llegó tal como viene (paquetes, bloques, pacas). El sistema hace la cuenta."
+    >
+      {items.error || open.error ? (
+        <ErrorBox
+          message={items.error ?? open.error ?? ''}
+          onRetry={() => {
+            items.reload();
+            open.reload();
+          }}
+        />
+      ) : !items.data || !open.data ? (
+        <Loading />
+      ) : (
+        <div className="space-y-6">
+          {canFill && (
+            <div>
+              <Wide>
+                <table className="w-full min-w-[720px] border-collapse">
+                  <thead>
+                    <tr>
+                      <td className={SECTION} colSpan={4}>
+                        Lo que se pidió · escribe lo que llegó
+                      </td>
+                    </tr>
+                    <tr>
+                      <th className={cx(TH, 'w-[34%] text-left')}>Producto</th>
+                      <th className={TH}>Pedido</th>
+                      <th className={TH}>Llegó</th>
+                      <th className={TH}>Entra</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((i) => {
+                      const sh = shortageOf.get(i.id);
+                      const m = milli(i);
+                      const lu = smallUnit(i.base_unit);
+                      const why = sh
+                        ? sh.status === 'pedido'
+                          ? 'Pedido'
+                          : sh.level === 'agotado'
+                            ? 'Se acabó'
+                            : 'Queda poco'
+                        : i.status === 'agotado'
+                          ? 'Agotado'
+                          : i.status === 'bajo'
+                            ? 'Bajo el mínimo'
+                            : 'Agregado';
+                      return (
+                        <tr key={i.id} className={cx(m > 0 ? 'bg-emerald-50/60' : 'odd:bg-white even:bg-cream-50/60')}>
+                          <td className={cx(TD, 'font-semibold')}>
+                            {i.name}
+                            <span className="block text-[10px] font-normal text-ink-500">{[presentationText(i), i.location].filter(Boolean).join(' · ')}</span>
+                          </td>
+                          <td className={cx(TD, 'text-center text-[12px]')}>{why}</td>
+                          <td className={cx(TD, 'bg-amber-50 p-1')}>
+                            <div className="flex flex-wrap items-center justify-center gap-1">
+                              {i.pack_size_m > 0 && (
+                                <>
+                                  <input
+                                    className={CELL_INPUT}
+                                    inputMode="decimal"
+                                    value={cells[i.id]?.packs ?? ''}
+                                    onChange={(e) => set(i.id, 'packs', e.target.value)}
+                                    placeholder="0"
+                                    aria-label={`${i.name}: ${i.pack_label}s`}
+                                  />
+                                  <span className="text-[11px] text-ink-500">{i.pack_label === 'paquete' ? 'paq' : i.pack_label} +</span>
+                                </>
+                              )}
+                              <input
+                                className={cx(CELL_INPUT, 'w-16')}
+                                inputMode="decimal"
+                                value={cells[i.id]?.loose ?? ''}
+                                onChange={(e) => set(i.id, 'loose', e.target.value)}
+                                placeholder="0"
+                                aria-label={`${i.name}: ${UNIT_SHORT[lu]} sueltos`}
+                              />
+                              <span className="text-[11px] text-ink-500">{UNIT_SHORT[lu]}</span>
+                            </div>
+                          </td>
+                          <td className={cx(TD, 'text-center font-bold tabular-nums')}>{m > 0 ? formatQty(m, niceUnit(m, i.base_unit)) : ''}</td>
+                        </tr>
+                      );
+                    })}
+                    {rows.length === 0 && (
+                      <tr>
+                        <td className={cx(TD, 'text-center text-ink-500')} colSpan={4}>
+                          No hay faltantes ni productos bajo el mínimo. Agrega abajo lo que llegó.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </Wide>
+              <div className="mt-3 flex flex-wrap items-end gap-3 print:hidden">
+                <label className="min-w-56 flex-1">
+                  <span className="label">Llegó algo más</span>
+                  <select className="input" value="" onChange={(e) => e.target.value && setExtra((x) => [...x, Number(e.target.value)])}>
+                    <option value="">Agregar producto…</option>
+                    {addable.map((i) => (
+                      <option key={i.id} value={i.id}>
+                        {i.name}
+                        {presentationText(i) ? ` (${presentationText(i)})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="min-w-48 flex-1">
+                  <span className="label">Proveedor o factura (opcional)</span>
+                  <input className="input" value={supplier} onChange={(e) => setSupplier(e.target.value)} maxLength={120} placeholder="Ej. Zenú, factura 1234" />
+                </label>
+                <button className="btn-primary" disabled={busy || filled.length === 0} onClick={() => void save()}>
+                  {busy && <Loader2 className="size-4 animate-spin" />} Guardar lo que llegó ({filled.length})
+                </button>
+              </div>
+            </div>
+          )}
+          {!canFill && date === today && (
+            <p className="text-xs text-ink-500 print:hidden">Para registrar lo que llega, el administrador debe darte el permiso «Entradas de mercancía».</p>
+          )}
+          <Wide>
+            <table className="w-full min-w-[640px] border-collapse">
+              <thead>
+                <tr>
+                  <td className={SECTION} colSpan={4}>
+                    Lo que entró {date === today ? 'hoy' : 'ese día'}
+                  </td>
+                </tr>
+                <tr>
+                  <th className={TH}>Hora</th>
+                  <th className={cx(TH, 'text-left')}>Producto</th>
+                  <th className={TH}>Cantidad</th>
+                  <th className={TH}>Recibió · referencia</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dayEntries.map((m) => {
+                  const it = byId.get(m.item_id);
+                  return (
+                    <tr key={m.id}>
+                      <td className={cx(TD, 'text-center tabular-nums')}>{formatTime(m.created_at)}</td>
+                      <td className={cx(TD, 'font-semibold uppercase')}>{m.item_name}</td>
+                      <td className={cx(TD, 'text-center tabular-nums')}>{it ? qtyText(m.delta_m, it) : formatQty(m.delta_m, m.unit)}</td>
+                      <td className={cx(TD, 'text-[12px]')}>
+                        {m.user_name} · {m.reason}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {dayEntries.length === 0 && (
+                  <tr>
+                    <td className={cx(TD, 'h-8 text-center text-ink-500')} colSpan={4}>
+                      {movs.error ? 'No tienes permiso para ver las entradas.' : 'Sin entradas.'}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </Wide>
+        </div>
+      )}
+    </Paper>
+  );
+}
+
+// ---------- 7. Porcionado ----------
+
+/** Lo que se porcionó en la semana: porciones por tamaño, la merma y el rendimiento. */
+export function PorcionadoSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
+  const { can } = useApp();
+  const today = localDate();
+  const [date, setDate] = useState(today);
+  const from = weekStart(date);
+  const to = weekEnd(date);
+  const list = useApi<Portioning[]>(`/portionings?from=${from}&to=${to}&limit=500`, [from, to]);
+  const rows = [...(list.data ?? [])].filter((p) => p.status === 'activa').sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const totals = new Map<string, { name: string; base: BaseUnit; output: number; merma: number }>();
+  for (const p of rows) {
+    const t = totals.get(p.item_name) ?? { name: p.item_name, base: p.base_unit, output: 0, merma: 0 };
+    t.output += p.output_m;
+    t.merma += p.merma_m;
+    totals.set(p.item_name, t);
+  }
+
+  return (
+    <Paper
+      title="Porcionado"
+      subtitle={`Semana del ${shortDate(from)} al ${shortDate(to)}`}
+      nav={<WeekNav from={from} setDate={setDate} />}
+      note="Las porciones siguen siendo el mismo producto: no se cuentan dos veces. Solo sale la merma."
+      actions={
+        can('kitchen.use') && (
+          <button className="btn-primary btn-sm" onClick={() => onFlow({ kind: 'porcionar' })}>
+            <Plus className="size-4" /> Porcionar
+          </button>
+        )
+      }
+    >
+      {list.error ? (
+        <ErrorBox message={list.error} onRetry={list.reload} />
+      ) : !list.data ? (
+        <Loading />
+      ) : (
+        <div className="space-y-6">
+          <Wide>
+            <table className="w-full min-w-[760px] border-collapse">
+              <thead>
+                <tr>
+                  <th className={TH}>Fecha</th>
+                  <th className={cx(TH, 'text-left')}>Producto</th>
+                  <th className={cx(TH, 'text-left')}>Porciones</th>
+                  <th className={TH}>Porcionado</th>
+                  <th className={TH}>Merma</th>
+                  <th className={TH}>Rendimiento</th>
+                  <th className={TH}>Responsable</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((p) => (
+                  <tr key={p.id}>
+                    <td className={cx(TD, 'text-center tabular-nums')}>{dayHead(p.local_date)}</td>
+                    <td className={cx(TD, 'font-semibold uppercase')}>{p.item_name}</td>
+                    <td className={cx(TD, 'text-[12px]')}>{p.lines.map((l) => `${l.n} ${l.label}`).join(' · ')}</td>
+                    <td className={cx(TD, 'text-center tabular-nums')}>{formatQty(p.output_m, niceUnit(p.output_m, p.base_unit))}</td>
+                    <td className={cx(TD, 'text-center tabular-nums')}>{p.merma_m ? formatQty(p.merma_m, niceUnit(p.merma_m, p.base_unit)) : '—'}</td>
+                    <td className={cx(TD, 'text-center font-bold tabular-nums', p.yield_pct !== null && p.yield_pct < 90 && 'text-brand-700')}>
+                      {p.yield_pct === null ? '' : `${formatNumber(p.yield_pct)} %`}
+                    </td>
+                    <td className={cx(TD, 'uppercase')}>{p.user_name}</td>
+                  </tr>
+                ))}
+                {Array.from({ length: Math.max(0, 8 - rows.length) }, (_, i) => (
+                  <tr key={`v${i}`}>
+                    {Array.from({ length: 7 }, (__, j) => (
+                      <td key={j} className={cx(TD, 'h-8')} />
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Wide>
+          {totals.size > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full max-w-xl border-collapse">
+                <thead>
+                  <tr>
+                    <td className={SECTION} colSpan={4}>
+                      Total de la semana
+                    </td>
+                  </tr>
+                  <tr>
+                    <th className={cx(TH, 'text-left')}>Producto</th>
+                    <th className={TH}>Porcionado</th>
+                    <th className={TH}>Merma</th>
+                    <th className={TH}>Rendimiento</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...totals.values()].map((t) => (
+                    <tr key={t.name}>
+                      <td className={cx(TD, 'font-semibold uppercase')}>{t.name}</td>
+                      <td className={cx(TD, 'text-center tabular-nums')}>{formatQty(t.output, niceUnit(t.output, t.base))}</td>
+                      <td className={cx(TD, 'text-center tabular-nums')}>{t.merma ? formatQty(t.merma, niceUnit(t.merma, t.base)) : '—'}</td>
+                      <td className={cx(TD, 'text-center font-bold tabular-nums')}>{formatNumber(Math.round((t.output / (t.output + t.merma)) * 1000) / 10)} %</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <p className="text-[11px] text-ink-500">Rendimiento = lo porcionado ÷ (lo porcionado + la merma). En rojo si queda por debajo de 90 %.</p>
+        </div>
+      )}
+    </Paper>
+  );
+}
+
+// ---------- 8. Bebidas ----------
+
+/**
+ * Control de bebidas (aguas, gaseosas, jugos de caja…): todo va por unidad, así que lo
+ * vendido debe cuadrar exacto con lo que falta en la nevera.
+ * Debe quedar = inicio + entrada − vendido. Diferencia = fin − debe quedar.
+ */
+export function BebidasSheet() {
+  const { can } = useApp();
+  const today = localDate();
+  const [date, setDate] = useState(today);
+  const sheet = useApi<InventorySheet>(`/sheets/inventory?date=${date}`, [date]);
+  const admin = can('kitchen.manage');
+  const lines = (sheet.data?.sections ?? []).flatMap((s) => s.lines.filter((l) => l.category === 'Bebidas').map((l) => ({ ...l, location: s.location })));
+  const rows = lines.map((l) => {
+    const should = l.open_m !== null && l.sales_m !== null ? l.open_m + l.entries_m - l.sales_m : null;
+    const diff = should !== null && l.close_m !== null ? l.close_m - should : null;
+    return { l, should, diff };
+  });
+  const missing = rows.reduce((sum, r) => sum + (r.diff !== null && r.diff < 0 ? -r.diff : 0), 0);
+
+  return (
+    <Paper title="Bebidas" subtitle={date === today ? `Hoy, ${shortDateDow(date)}` : shortDateDow(date)} nav={<DayNav date={date} setDate={setDate} />}>
+      {sheet.error ? (
+        <ErrorBox message={sheet.error} onRetry={sheet.reload} />
+      ) : !sheet.data ? (
+        <Loading />
+      ) : (
+        <div className="space-y-4">
+          <Wide>
+            <table className="w-full min-w-[720px] border-collapse">
+              <thead>
+                <tr>
+                  <th className={cx(TH, 'w-[28%] text-left')}>Bebida</th>
+                  <th className={TH}>Inicio</th>
+                  <th className={TH}>Entrada</th>
+                  {admin && <th className={TH}>Vendido</th>}
+                  {admin && <th className={TH}>Debe quedar</th>}
+                  <th className={TH}>Fin</th>
+                  {admin && <th className={TH}>Diferencia</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(({ l, should, diff }) => {
+                  const fmt = (m: number) => formatQty(m, niceUnit(Math.abs(m), l.base_unit));
+                  return (
+                    <tr key={l.item_id} className="odd:bg-white even:bg-cream-50/60">
+                      <td className={cx(TD, 'font-semibold')}>
+                        {l.name}
+                        <span className="block text-[10px] font-normal text-ink-500">{[presentationText(l), l.location].filter(Boolean).join(' · ')}</span>
+                      </td>
+                      <td className={cx(TD, 'text-center tabular-nums')}>{qtyText(l.open_m, l, l.open_detail)}</td>
+                      <td className={cx(TD, 'text-center tabular-nums')}>{l.entries_m ? qtyText(l.entries_m, l) : ''}</td>
+                      {admin && <td className={cx(TD, 'text-center tabular-nums')}>{l.sales_m ? fmt(l.sales_m) : ''}</td>}
+                      {admin && <td className={cx(TD, 'text-center tabular-nums')}>{should === null ? '' : fmt(should)}</td>}
+                      <td className={cx(TD, 'text-center tabular-nums')}>{qtyText(l.close_m, l, l.close_detail)}</td>
+                      {admin && (
+                        <td
+                          className={cx(
+                            TD,
+                            'text-center font-bold tabular-nums',
+                            diff === null ? '' : diff < 0 ? 'text-brand-700' : diff > 0 ? 'text-amber-700' : 'text-emerald-700',
+                          )}
+                        >
+                          {diff === null ? '' : diff === 0 ? 'Cuadra' : `${diff > 0 ? '+' : '−'}${fmt(Math.abs(diff))}`}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+                {rows.length === 0 && (
+                  <tr>
+                    <td className={cx(TD, 'text-center text-ink-500')} colSpan={admin ? 7 : 4}>
+                      No hay productos en la categoría «Bebidas». Créalos en Inventario con categoría Bebidas y control por unidades.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </Wide>
+          {admin && missing > 0 && <p className="text-sm font-bold text-brand-700">Faltan {formatNumber(missing / 1000)} bebidas que no aparecen vendidas ni dadas de baja.</p>}
+          <p className="text-[11px] text-ink-500">
+            Las bebidas se cuentan en <b>Inventario diario</b> (inicio y fin de su nevera) y se descuentan solas con cada venta. Aquí se ve si cuadran: un faltante es una bebida
+            que salió sin venderse.
+          </p>
         </div>
       )}
     </Paper>

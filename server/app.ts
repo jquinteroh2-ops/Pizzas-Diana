@@ -16,6 +16,7 @@ import * as shortages from './services/shortages.ts';
 import * as counts from './services/counts.ts';
 import * as plan from './services/plan.ts';
 import * as kitchen from './services/kitchen.ts';
+import * as portioning from './services/portioning.ts';
 import { localDate } from '../shared/dates.ts';
 
 const COOKIE = 'pd_session';
@@ -143,6 +144,10 @@ export function createApp(db: DB, opts: { secureCookies?: boolean; staticDir?: s
   app.put('/api/items/:id', need('inventory.edit'), h((req) => inv.updateItem(db, id(req), req.body ?? {})));
   app.post('/api/items/:id/active', need('inventory.edit'), h((req) => inv.setItemActive(db, id(req), req.body?.active === true)));
   app.post('/api/items/:id/entry', need('inventory.entry'), h((req) => inv.registerEntry(db, req.user!, id(req), req.body ?? {})));
+  // Recibir un pedido: varias entradas a la vez, contadas en paquetes como llegaron.
+  app.post('/api/entries', need('inventory.entry'), h((req, res) => {
+    res.status(201).json(inv.registerEntries(db, req.user!, req.body ?? {}));
+  }));
   app.post('/api/items/:id/adjust', need('inventory.adjust'), h((req) => inv.registerAdjustment(db, req.user!, id(req), req.body ?? {})));
   app.get('/api/movements', need('inventory.view'), h((req) =>
     inv.listMovements(db, { itemId: qNum(req.query.itemId), type: qStr(req.query.type), limit: qNum(req.query.limit) }),
@@ -216,6 +221,15 @@ export function createApp(db: DB, opts: { secureCookies?: boolean; staticDir?: s
     res.status(201).json(preps.registerProduction(db, req.user!, req.body ?? {}));
   }));
   app.post('/api/productions/:id/annul', need('kitchen.manage'), h((req) => preps.annulProduction(db, req.user!, id(req), req.body ?? {})));
+
+  // Porcionado: partir un insumo en porciones. Solo descuenta la merma.
+  app.get('/api/portionings', need('kitchen.use'), h((req) =>
+    portioning.listPortionings(db, { from: qStr(req.query.from), to: qStr(req.query.to), itemId: qNum(req.query.itemId), limit: qNum(req.query.limit) }),
+  ));
+  app.post('/api/portionings', need('kitchen.use'), h((req, res) => {
+    res.status(201).json(portioning.registerPortioning(db, req.user!, req.body ?? {}));
+  }));
+  app.post('/api/portionings/:id/annul', need('kitchen.manage'), h((req) => portioning.annulPortioning(db, req.user!, id(req), req.body ?? {})));
 
   // Bajas: las reporta cualquiera, las autoriza el administrador.
   app.get('/api/wastes', need('kitchen.report'), h((req) =>

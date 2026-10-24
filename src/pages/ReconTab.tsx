@@ -38,7 +38,7 @@ export default function ReconTab() {
       <div className="card mb-4 p-4 text-sm text-ink-700">
         <p>
           <b>Descontó caja</b>: lo que se debió gastar según las recetas de lo vendido (el descuento automático de cada venta). <b>Gastó la cocina</b>: lo que de verdad salió
-          según los conteos: <i>lo que había al abrir + lo que entró + lo preparado − lo usado para preparar − las bajas − lo que quedó al cerrar</i>.
+          según los conteos: <i>lo que había al abrir + lo que entró + lo preparado − lo usado para preparar − las bajas − la merma al porcionar − lo que quedó al cerrar</i>.
         </p>
         <p className="mt-1 text-xs text-ink-500">
           Si la cocina gastó más de lo vendido puede ser: porciones más grandes que la receta, comida de personal o regalada, pérdidas sin reportar o una receta mal
@@ -107,6 +107,7 @@ export default function ReconTab() {
                       <th className="th-cell text-right">Preparado</th>
                       <th className="th-cell text-right">Usado p/ preparar</th>
                       <th className="th-cell text-right">Bajas</th>
+                      <th className="th-cell text-right">Merma porcionar</th>
                       <th className="th-cell text-right">Al cerrar</th>
                       <th className="th-cell bg-ink-900/5 text-right">Gastó cocina</th>
                       <th className="th-cell bg-ink-900/5 text-right">Descontó caja</th>
@@ -128,6 +129,7 @@ export default function ReconTab() {
                           <td className="td-cell text-right text-emerald-700 tabular-nums">{l.produced_m ? `+${fmt(l.produced_m, l.base_unit)}` : '—'}</td>
                           <td className="td-cell text-right tabular-nums">{l.used_m ? `−${fmt(l.used_m, l.base_unit)}` : '—'}</td>
                           <td className="td-cell text-right tabular-nums">{l.waste_m ? `−${fmt(l.waste_m, l.base_unit)}` : '—'}</td>
+                          <td className="td-cell text-right tabular-nums">{l.trim_m ? `−${fmt(l.trim_m, l.base_unit)}` : '—'}</td>
                           <td className="td-cell text-right tabular-nums">{fmt(l.close_m, l.base_unit)}</td>
                           <td className="td-cell bg-ink-900/5 text-right font-semibold tabular-nums">{fmt(l.real_m, l.base_unit)}</td>
                           <td className="td-cell bg-ink-900/5 text-right font-semibold tabular-nums">{fmt(l.sales_m, l.base_unit)}</td>

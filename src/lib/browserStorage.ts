@@ -22,6 +22,7 @@ import type {
   PrepTask,
   Product,
   Production,
+  Portioning,
   RecipeLine,
   Requirement,
   Sale,
@@ -52,6 +53,12 @@ import { can, EXTRA_PERMS, ROLES, type Action, type ExtraPerm, type Role } from 
 import {
   COUNT_KINDS,
   LOCATIONS,
+  countInput,
+  entryMilli,
+  parsePortions,
+  portioningYield,
+  smallUnitOf,
+  type CountDetail,
   productionYield,
   realConsumption,
   scaleBatch,
@@ -66,7 +73,7 @@ import {
   type WasteReason,
   type WasteStatus,
 } from '../../shared/kitchen.ts';
-import { CATALOG_ITEMS, CATALOG_PREPARATIONS, CATALOG_PRODUCTS } from '../../shared/catalog.ts';
+import { CATALOG_ITEMS, CATALOG_PREPARATIONS, CATALOG_PRODUCTS, CATALOG_WEEK_PLAN, DEMO_PORTIONING, catalogItemBody } from '../../shared/catalog.ts';
 import { ApiError } from './api';
 
 const STORAGE_KEY = 'pizza_diana_client_db_v5';
@@ -157,7 +164,22 @@ interface CountRec {
   reviewed_by: number | null;
   reviewed_at: string | null;
   is_demo: number;
-  lines: { item_id: number; item_name: string; expected_m: number; counted_m: number }[];
+  lines: { item_id: number; item_name: string; expected_m: number; counted_m: number; detail?: CountDetail | null }[];
+}
+interface PortRec {
+  id: number;
+  item_id: number;
+  item_name: string;
+  lines: { label: string; size_m: number; n: number }[];
+  output_m: number;
+  merma_m: number;
+  note: string;
+  status: 'activa' | 'anulada';
+  user_id: number;
+  created_at: string;
+  local_date: string;
+  annul_reason: string | null;
+  is_demo: number;
 }
 interface TaskRec {
   id: number;
@@ -183,8 +205,9 @@ interface State {
   shortages: ShortageRec[];
   counts: CountRec[];
   tasks: TaskRec[];
+  portionings: PortRec[];
   demoMode: boolean;
-  seq: Record<'item' | 'product' | 'user' | 'mov' | 'prep' | 'prod' | 'waste' | 'short' | 'count' | 'task' | 'sale', number>;
+  seq: Record<'item' | 'product' | 'user' | 'mov' | 'prep' | 'prod' | 'waste' | 'short' | 'count' | 'task' | 'sale' | 'portion', number>;
 }
 
 type Opts = { at?: string; isDemo?: boolean };
@@ -253,8 +276,9 @@ function emptyState(): State {
     shortages: [],
     counts: [],
     tasks: [],
+    portionings: [],
     demoMode: false,
-    seq: { item: 1, product: 1, user: 1, mov: 1, prep: 1, prod: 1, waste: 1, short: 1, count: 1, task: 1, sale: 1000 },
+    seq: { item: 1, product: 1, user: 1, mov: 1, prep: 1, prod: 1, waste: 1, short: 1, count: 1, task: 1, sale: 1000, portion: 1 },
   };
 }
 
@@ -270,6 +294,7 @@ function migrateV4(old: Record<string, unknown>): State {
     location: i.location ?? 'Otro',
     pack_size_m: i.pack_size_m ?? 0,
     pack_label: i.pack_label ?? '',
+    portions: i.portions ?? [],
     sort_order: i.sort_order ?? (idx + 1) * 10,
   }));
   s.products = ((old.products as Product[] | undefined) ?? []).map((p) => ({
@@ -284,6 +309,14 @@ function migrateV4(old: Record<string, unknown>): State {
   s.seq.product = maxId(s.products);
   s.seq.user = maxId(s.users);
   s.seq.mov = maxId(s.movements);
+  return s;
+}
+
+/** Completa lo que les falta a los datos guardados antes de las porciones (no se pierde nada). */
+function normalize(s: State): State {
+  s.portionings ??= [];
+  s.seq.portion ??= s.portionings.reduce((m, p) => Math.max(m, p.id), 0) + 1;
+  for (const i of s.items) i.portions ??= [];
   return s;
 }
 
@@ -334,7 +367,7 @@ class BrowserDB {
   private load(): State {
     try {
       const data = localStorage.getItem(STORAGE_KEY);
-      if (data) return JSON.parse(data) as State;
+      if (data) return normalize(JSON.parse(data) as State);
       const legacy = localStorage.getItem(LEGACY_KEY);
       if (legacy) {
         const migrated = migrateV4(JSON.parse(legacy));
@@ -522,7 +555,8 @@ class BrowserDB {
     else if (body.pack_size !== undefined) pack = toMilli(num(body.pack_size, 'tamaño del paquete'), unitFor(body.pack_unit, unit, 'paquete'));
     const label = body.pack_label === undefined ? (cur?.pack_label ?? '') : optStr(body.pack_label, 30);
     const sort = body.sort_order === undefined ? (cur?.sort_order ?? this.state.items.length * 10 + 10) : Math.round(num(body.sort_order, 'orden'));
-    return { location: location as Location, kind: kind as ItemKind, pack_size_m: pack, pack_label: pack > 0 ? label || 'paquete' : '', sort_order: sort };
+    const portions = body.portions === undefined ? (cur?.portions ?? []) : parsePortions(body.portions, unit, toMilli, (u) => isUnit(u) && compatible(u, unit), (m) => bad(m));
+    return { location: location as Location, kind: kind as ItemKind, pack_size_m: pack, pack_label: pack > 0 ? label || 'paquete' : '', portions, sort_order: sort };
   }
 
   createItem(user: User, body: Body, opts: Opts = {}): Item {
@@ -582,14 +616,41 @@ class BrowserDB {
     return it;
   }
 
+  /** Paquetes (× lo que trae cada uno) + suelto: igual que el servidor. */
+  private entryQty(it: Item, body: Body): number {
+    const has = (v: unknown) => v !== undefined && v !== null && v !== '';
+    const packs = has(body.packs) ? num(body.packs, `paquetes de ${it.name}`) : 0;
+    if (packs > 0 && it.pack_size_m <= 0) throw bad(`"${it.name}" no tiene configurado cómo viene (tamaño del paquete).`);
+    const loose = has(body.qty) ? toMilli(num(body.qty, `cantidad de ${it.name}`), unitFor(body.unit, it.unit, it.name)) : 0;
+    const total = entryMilli(it, packs, loose);
+    if (total <= 0) throw bad(`Escribe cuánto llegó de "${it.name}".`);
+    return total;
+  }
+
+  /** Recibir un pedido: varias entradas a la vez (el enrutador guarda todo o nada). */
+  registerEntries(user: User, body: Body, opts: Opts = {}) {
+    if (!Array.isArray(body.lines) || body.lines.length === 0) throw bad('Escribe lo que llegó de al menos un producto.');
+    const reason = optStr(body.reason, 200) || 'Recepción de pedido';
+    const seen = new Set<number>();
+    const lines = (body.lines as Body[]).map((l) => {
+      const it = this.item(Number(l.item_id));
+      if (!it.active) throw conflict(`"${it.name}" está desactivado.`);
+      if (seen.has(it.id)) throw bad(`"${it.name}" está repetido en la recepción.`);
+      seen.add(it.id);
+      return { it, delta: this.entryQty(it, l) };
+    });
+    const at = opts.at ?? nowIso();
+    const items = lines.map((l) => this.registerEntry(user, l.it.id, { qty: l.delta / 1000, unit: smallUnitOf(l.it.base_unit), reason }, { ...opts, at }));
+    return { count: items.length, items };
+  }
+
   registerEntry(user: User, id: number, body: Body, opts: Opts = {}): Item {
     const it = this.item(id);
     if (!it.active) throw conflict('El artículo está desactivado.');
-    const unit = unitFor(body.unit, it.unit, it.name);
     const at = opts.at ?? nowIso();
     this.applyMovement({
       itemId: id,
-      delta: toMilli(num(body.qty, 'cantidad', { allowZero: false }), unit),
+      delta: this.entryQty(it, body),
       type: 'entrada',
       reason: optStr(body.reason, 200) || 'Entrada de mercancía',
       user,
@@ -1212,7 +1273,7 @@ class BrowserDB {
     const lines = this.state.items
       .filter((i) => i.active && i.location === loc)
       .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, 'es'))
-      .map((i) => ({ item_id: i.id, name: i.name, unit: i.unit, base_unit: i.base_unit, qty_m: i.qty_m, pack_size_m: i.pack_size_m, pack_label: i.pack_label, kind: i.kind }));
+      .map((i) => ({ item_id: i.id, name: i.name, unit: i.unit, base_unit: i.base_unit, qty_m: i.qty_m, pack_size_m: i.pack_size_m, pack_label: i.pack_label, portions: i.portions ?? [], kind: i.kind }));
     return { location: loc, lines };
   }
 
@@ -1229,7 +1290,7 @@ class BrowserDB {
       lines: withLines
         ? lines.map((l) => {
             const it = this.item(l.item_id);
-            return { ...l, unit: it.unit, base_unit: it.base_unit, diff_m: l.counted_m - l.expected_m };
+            return { ...l, detail: l.detail ?? null, unit: it.unit, base_unit: it.base_unit, diff_m: l.counted_m - l.expected_m };
           })
         : undefined,
     };
@@ -1259,7 +1320,8 @@ class BrowserDB {
       if (!it) throw bad(`Un producto del conteo no está en ${sheet.location}.`);
       if (seen.has(it.item_id)) throw bad(`"${it.name}" está repetido en el conteo.`);
       seen.add(it.item_id);
-      return { item_id: it.item_id, item_name: it.name, expected_m: it.qty_m, counted_m: toMilli(num(l.qty, `cantidad de ${it.name}`), unitFor(l.unit, it.unit, it.name)) };
+      const { countedM, detail } = countInput(it, l, (q, u) => toMilli(num(q, `cantidad de ${it.name}`), unitFor(u, it.unit, it.name)), (m) => bad(m));
+      return { item_id: it.item_id, item_name: it.name, expected_m: it.qty_m, counted_m: countedM, detail };
     });
     if (!lines.length) throw bad('Escribe la cantidad de al menos un producto.');
     const at = opts.at ?? nowIso();
@@ -1329,9 +1391,11 @@ class BrowserDB {
         let produced = 0;
         let used = 0;
         let waste = 0;
+        let trim = 0;
         let sales = 0;
         for (const m of this.state.movements) {
           if (m.item_id !== it.id || m.created_at < from || m.created_at >= to) continue;
+          if (m.type === 'porcionado') trim -= m.delta_m;
           if (m.type === 'entrada' && m.delta_m > 0) entries += m.delta_m;
           else if (m.type === 'produccion') {
             if (m.delta_m > 0) produced += m.delta_m;
@@ -1340,7 +1404,7 @@ class BrowserDB {
           else if (m.type === 'venta' && m.delta_m < 0) sales -= m.delta_m;
           else if (m.type === 'anulacion' && m.delta_m > 0) sales -= m.delta_m;
         }
-        const real = realConsumption({ openM: l.counted_m, closeM, entriesM: entries, producedM: produced, usedForPrepM: used, wasteM: waste });
+        const real = realConsumption({ openM: l.counted_m, closeM, entriesM: entries, producedM: produced, usedForPrepM: used, wasteM: waste, trimM: trim });
         lines.push({
           item_id: it.id,
           name: it.name,
@@ -1352,6 +1416,7 @@ class BrowserDB {
           produced_m: produced,
           used_m: used,
           waste_m: waste,
+          trim_m: trim,
           close_m: closeM,
           real_m: real,
           sales_m: sales,
@@ -1368,7 +1433,7 @@ class BrowserDB {
     const admin = can(user, 'kitchen.manage');
     const valuesOf = (id?: number) => {
       const c = id ? this.state.counts.find((x) => x.id === id) : undefined;
-      return c ? new Map(c.lines.map((l) => [l.item_id, l.counted_m])) : null;
+      return c ? new Map(c.lines.map((l) => [l.item_id, { m: l.counted_m, detail: l.detail ?? null }])) : null;
     };
     const dayStart = (ymd: string) => new Date(`${ymd}T00:00:00-05:00`).toISOString();
     const sections = this.dayCountStatus(date).map((s) => {
@@ -1391,22 +1456,30 @@ class BrowserDB {
             else if (m.type === 'venta' && m.delta_m < 0) sales -= m.delta_m;
             else if (m.type === 'anulacion' && m.delta_m > 0) sales -= m.delta_m;
           }
-          const openM = open?.get(i.id) ?? null;
-          const closeM = close?.get(i.id) ?? null;
+          const o = open?.get(i.id);
+          const c = close?.get(i.id);
+          const p = prevClose?.get(i.id);
+          const openM = o?.m ?? null;
+          const closeM = c?.m ?? null;
           return {
             item_id: i.id,
             name: i.name,
+            category: i.category,
             unit: i.unit,
             base_unit: i.base_unit,
             pack_size_m: i.pack_size_m,
             pack_label: i.pack_label,
+            portions: i.portions ?? [],
             open_m: openM,
+            open_detail: o?.detail ?? null,
+            close_detail: c?.detail ?? null,
+            prev_close_detail: p?.detail ?? null,
             entries_m: entries,
             produced_m: produced,
             close_m: closeM,
             consumption_m: openM !== null && closeM !== null ? openM + entries + produced - closeM : null,
             sales_m: admin ? sales : null,
-            prev_close_m: prevClose?.get(i.id) ?? null,
+            prev_close_m: p?.m ?? null,
           };
         });
       return { location: s.location, apertura: s.apertura, cierre: s.cierre, lines };
@@ -1433,6 +1506,78 @@ class BrowserDB {
     if (decision === 'aplicar') this.applyCount(admin, c, at);
     else Object.assign(c, { status: 'descartado', reviewed_by: admin.id, reviewed_at: at });
     return this.countView(c, true);
+  }
+
+  // ---------- Porcionado (igual que server/services/portioning.ts) ----------
+
+  private portioningView(p: PortRec): Portioning {
+    const it = this.item(p.item_id);
+    return {
+      ...p,
+      unit: it.unit,
+      base_unit: it.base_unit,
+      yield_pct: portioningYield(p.output_m, p.merma_m),
+      user_name: this.state.users.find((u) => u.id === p.user_id)?.name ?? '—',
+    };
+  }
+
+  listPortionings(q: { from?: string; to?: string; itemId?: number; limit?: number }): Portioning[] {
+    return this.state.portionings
+      .filter((p) => (!q.from || p.local_date >= q.from) && (!q.to || p.local_date <= q.to) && (!q.itemId || p.item_id === q.itemId))
+      .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id - a.id)
+      .slice(0, Math.min(q.limit ?? 100, 500))
+      .map((p) => this.portioningView(p));
+  }
+
+  registerPortioning(user: User, body: Body, opts: Opts = {}): Portioning {
+    const it = this.item(Number(body.item_id));
+    if (!it.active) throw conflict('El artículo está desactivado.');
+    const portions = it.portions ?? [];
+    if (!portions.length) throw bad(`"${it.name}" no tiene porciones configuradas. El administrador las agrega en Inventario → Editar.`);
+    const counts = Array.isArray(body.portions) ? body.portions : [];
+    if (counts.length > portions.length) throw bad('Hay más porciones de las configuradas.');
+    const lines = portions
+      .map((p, i) => {
+        const n = counts[i] === undefined || counts[i] === '' || counts[i] === null ? 0 : num(counts[i], `porciones «${p.label}»`);
+        if (!Number.isInteger(n)) throw bad(`Las porciones «${p.label}» deben ser un número entero.`);
+        return { label: p.label, size_m: p.size_m, n };
+      })
+      .filter((l) => l.n > 0);
+    if (!lines.length) throw bad('Escribe cuántas porciones salieron.');
+    const output = lines.reduce((sum, l) => sum + l.n * l.size_m, 0);
+    const merma = body.merma === undefined || body.merma === '' || body.merma === null ? 0 : toMilli(num(body.merma, 'merma'), smallUnitOf(it.base_unit));
+    if (merma > output) throw bad('La merma es más que lo porcionado. Revisa las cantidades.');
+    if (merma > it.qty_m) throw conflict(`Según el inventario no hay ${it.name} suficiente para esa merma. Si sí hay, avisa al administrador para que corrija la existencia.`);
+    const at = opts.at ?? nowIso();
+    const isDemo = opts.isDemo ?? this.state.demoMode;
+    const rec: PortRec = {
+      id: this.state.seq.portion++,
+      item_id: it.id,
+      item_name: it.name,
+      lines,
+      output_m: output,
+      merma_m: merma,
+      note: optStr(body.note, 300),
+      status: 'activa',
+      user_id: user.id,
+      created_at: at,
+      local_date: dayOf(at),
+      annul_reason: null,
+      is_demo: isDemo ? 1 : 0,
+    };
+    this.state.portionings.push(rec);
+    if (merma > 0) this.applyMovement({ itemId: it.id, delta: -merma, type: 'porcionado', reason: `Merma al porcionar #${rec.id}`, user, at, isDemo });
+    return this.portioningView(rec);
+  }
+
+  annulPortioning(user: User, id: number, body: Body): Portioning {
+    const p = this.state.portionings.find((x) => x.id === id);
+    if (!p) throw notFound('Porcionado no encontrado.');
+    if (p.status === 'anulada') throw conflict('Este porcionado ya fue anulado.');
+    const reason = str(body.reason, 'motivo', { min: 3, max: 200 });
+    if (p.merma_m > 0) this.applyMovement({ itemId: p.item_id, delta: p.merma_m, type: 'porcionado', reason: `Anulación del porcionado #${id}: ${reason}`, user, isDemo: !!p.is_demo });
+    Object.assign(p, { status: 'anulada', annul_reason: reason });
+    return this.portioningView(p);
   }
 
   // ---------- Plan de preparación ----------
@@ -1744,6 +1889,7 @@ class BrowserDB {
     const s = this.state;
     const demoItems = new Set(s.items.filter((i) => i.is_demo).map((i) => i.id));
     s.tasks = s.tasks.filter((t) => !t.is_demo);
+    s.portionings = s.portionings.filter((p) => !p.is_demo);
     s.productions = s.productions.filter((p) => !p.is_demo);
     s.wastes = s.wastes.filter((w) => !w.is_demo);
     s.shortages = s.shortages.filter((x) => !x.is_demo);
@@ -1768,7 +1914,7 @@ class BrowserDB {
         id[c.key] = found.id;
         return;
       }
-      id[c.key] = this.createItem(admin, { name: c.name, category: c.category, unit: c.unit, qty: 0, min: c.min, location: c.location, kind: c.kind, sort_order: (idx + 1) * 10 }).id;
+      id[c.key] = this.createItem(admin, catalogItemBody(c, idx, 0)).id;
       items++;
     });
     let preparations = 0;
@@ -1820,15 +1966,7 @@ function rng(seed: number) {
 
 const bogota = (ymd: string, h: number, m: number) => new Date(`${ymd}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00-05:00`).toISOString();
 
-const WEEK_PLAN: Record<number, string[]> = {
-  1: ['masa', 'cebolla_caramelizada', 'tomate_picado'],
-  2: ['pechuga_desmechada', 'cebolla_picada'],
-  3: ['cerdo_prep', 'pechuga_plancha'],
-  4: ['tomate_picado', 'carne_molida_prep'],
-  5: ['masa', 'cebolla_caramelizada', 'pechuga_desmechada'],
-  6: ['tomate_picado', 'pechuga_plancha'],
-  0: ['cebolla_picada', 'cerdo_prep'],
-};
+const WEEK_PLAN = CATALOG_WEEK_PLAN;
 
 /**
  * Arma la demostración llamando a las MISMAS funciones que usa la aplicación
@@ -1878,23 +2016,7 @@ function buildDemoState(keepUsers?: UserRec[]): State {
 
   const itemId: Record<string, number> = {};
   CATALOG_ITEMS.forEach((c, idx) => {
-    itemId[c.key] = db.createItem(
-      admin,
-      {
-        name: c.name,
-        category: c.category,
-        unit: c.unit,
-        qty: c.demoQty,
-        min: c.min,
-        location: c.location,
-        kind: c.kind,
-        sort_order: (idx + 1) * 10,
-        pack_size: c.demoPack?.[0] ?? null,
-        pack_unit: c.demoPack ? (c.unit === 'kg' ? 'g' : c.unit === 'l' ? 'ml' : c.unit) : undefined,
-        pack_label: c.demoPack?.[1],
-      },
-      { at: t0, ...demo },
-    ).id;
+    itemId[c.key] = db.createItem(admin, catalogItemBody(c, idx, c.demoQty), { at: t0, ...demo }).id;
   });
   const prepId: Record<string, number> = {};
   for (const p of CATALOG_PREPARATIONS) prepId[p.key] = db.createPreparation(catalogPrepBody(p, itemId), demo).id;
@@ -1912,13 +2034,17 @@ function buildDemoState(keepUsers?: UserRec[]): State {
     const c = catalogByItem.get(id)!;
     db.registerEntry(admin, id, { qty: Math.ceil((missingM + c.min * milliOf(c.unit)) / milliOf(c.unit)), unit: c.unit, reason }, { at, ...demo });
   };
-  const produce = (key: string, at: string, cook: User) => {
+  const produce = (key: string, at: string, cook: User, depth = 0): void => {
     const p = db.prep(prepId[key]);
     const base = p.inputs[0];
     const baseQ = Math.round(base.qty_m * (p.mode === 'lote' ? 1 : 2 + Math.floor(rand() * 3)));
     const factor = baseQ / base.qty_m;
     for (const i of p.inputs) {
       const need = Math.round(i.qty_m * factor);
+      // Si el ingrediente lo prepara la cocina (la piña de la salsa de piña), primero se prepara.
+      const sub = prepByOutput.get(i.item_id);
+      let guard = 0;
+      while (sub && depth < 2 && db.item(i.item_id).qty_m < need && guard++ < 4) produce(sub, at, cook, depth + 1);
       const have = db.item(i.item_id).qty_m;
       if (have < need) buy(i.item_id, need - have, at, 'Compra urgente (DEMO)');
     }
@@ -1981,6 +2107,17 @@ function buildDemoState(keepUsers?: UserRec[]): State {
       const at = bogota(day, 9 + idx, 10 + Math.floor(rand() * 40));
       if (new Date(at) <= now) produce(key, at, pick(cooks));
     });
+    // Porcionado de la mañana: pechuga, cerdo y papas (solo sale la merma).
+    const portionAt = bogota(day, 10, 30);
+    if (new Date(portionAt) <= now) {
+      for (const [key, counts, pct] of DEMO_PORTIONING) {
+        const it = db.item(itemId[key]);
+        const output = it.portions.reduce((sum, p, k) => sum + p.size_m * (counts[k] ?? 0), 0);
+        const merma = Math.round((output * pct * (0.7 + rand() * 0.6)) / 100 / 1000);
+        if (it.qty_m < output + merma * 1000) buy(it.id, output + merma * 1000 - it.qty_m, portionAt, 'Compra urgente (DEMO)');
+        db.registerPortioning(pick(cooks), { item_id: it.id, portions: counts, merma }, { at: portionAt, ...demo });
+      }
+    }
     const weekend = dow === 5 || dow === 6 || dow === 0;
     const count = Math.round((weekend ? 12 : 7) + rand() * (weekend ? 8 : 5));
     const times = Array.from({ length: count }, () => 12 * 60 + Math.floor(rand() * 10 * 60)).sort((a, b) => a - b);
@@ -2116,6 +2253,7 @@ async function route(method: string, path: string, body: Body): Promise<unknown>
   if ((mm = m(/^\/items\/(\d+)\/active$/))) return need('inventory.edit'), write(() => db.setItemActive(Number(mm![1]), body.active === true));
   if ((mm = m(/^\/items\/(\d+)\/entry$/))) return need('inventory.entry'), write(() => db.registerEntry(user, Number(mm![1]), body));
   if ((mm = m(/^\/items\/(\d+)\/adjust$/))) return need('inventory.adjust'), write(() => db.registerAdjust(user, Number(mm![1]), body));
+  if (clean === '/entries' && POST) return need('inventory.entry'), write(() => db.registerEntries(user, body));
   if (clean === '/movements') return need('inventory.view'), db.listMovements({ itemId: qn('itemId'), type: qs('type'), limit: qn('limit') });
 
   // Productos
@@ -2150,6 +2288,9 @@ async function route(method: string, path: string, body: Body): Promise<unknown>
   }
   if (clean === '/productions' && POST) return need('kitchen.use'), write(() => db.registerProduction(user, body));
   if ((mm = m(/^\/productions\/(\d+)\/annul$/))) return need('kitchen.manage'), write(() => db.annulProduction(user, Number(mm![1]), body));
+  if (clean === '/portionings' && GET) return need('kitchen.use'), db.listPortionings({ from: qs('from'), to: qs('to'), itemId: qn('itemId'), limit: qn('limit') });
+  if (clean === '/portionings' && POST) return need('kitchen.use'), write(() => db.registerPortioning(user, body));
+  if ((mm = m(/^\/portionings\/(\d+)\/annul$/))) return need('kitchen.manage'), write(() => db.annulPortioning(user, Number(mm![1]), body));
   if (clean === '/wastes' && GET) return need('kitchen.report'), db.listWastes(user, { status: qs('status'), from: qs('from'), to: qs('to'), limit: qn('limit') });
   if (clean === '/wastes' && POST) return need('kitchen.report'), write(() => db.reportWaste(user, body));
   if ((mm = m(/^\/wastes\/(\d+)\/photo$/))) return need('kitchen.report'), db.wastePhoto(user, Number(mm[1]));

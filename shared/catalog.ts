@@ -17,52 +17,55 @@ export interface CatalogItem {
   min: number;
   /** Existencia para la DEMO, en `unit`. */
   demoQty: number;
-  /** Solo DEMO: tamaño del paquete en g/ml/und y su nombre. En lo real lo configura el administrador. */
-  demoPack?: [size: number, label: string];
+  /**
+   * Cómo viene del proveedor: tamaño en g/ml/und y nombre («paquete × 10 und»).
+   * SUGERIDO: el administrador lo corrige en Inventario si su proveedor lo trae distinto.
+   */
+  pack?: [size: number, label: string];
+  /** Porciones en que la cocina lo parte (g/ml/und). Siguen siendo el mismo artículo. */
+  portions?: [label: string, size: number][];
 }
 
 export const CATALOG_ITEMS: CatalogItem[] = [
   // ---- Congelador ----
-  { key: 'queso_montanita', name: 'Queso montañita', category: 'Lácteos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 1, demoQty: 2.4 },
-  { key: 'chorizo_santacruz', name: 'Chorizo Santa Cruz', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 1, demoQty: 3.385, demoPack: [1000, 'paquete'] },
-  { key: 'jamon', name: 'Jamón', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 1.5, demoQty: 4.4, demoPack: [500, 'paquete'] },
-  { key: 'salchicha_manguera', name: 'Salchicha manguera', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 1, demoQty: 2 },
-  { key: 'pepperoni', name: 'Pepperoni', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 1, demoQty: 2.77, demoPack: [500, 'paquete'] },
-  { key: 'chorizo_parrillada', name: 'Chorizo parrillada', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 1, demoQty: 2.24 },
+  { key: 'queso_montanita', name: 'Queso montañita', category: 'Lácteos', location: 'Congelador', unit: 'g', kind: 'insumo', min: 1000, demoQty: 2400, pack: [2500, 'bloque'] },
+  { key: 'chorizo_santacruz', name: 'Chorizo Santa Cruz', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 1, demoQty: 3.385, pack: [1000, 'paquete'] },
+  { key: 'jamon', name: 'Jamón', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 1.5, demoQty: 4.4, pack: [500, 'paquete'] },
+  { key: 'salchicha_manguera', name: 'Salchicha manguera', category: 'Carnes y embutidos', location: 'Congelador', unit: 'unidad', kind: 'insumo', min: 10, demoQty: 40, pack: [10, 'paquete'] },
+  { key: 'pepperoni', name: 'Pepperoni', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 1, demoQty: 2.77, pack: [500, 'paquete'] },
+  { key: 'chorizo_parrillada', name: 'Chorizo parrillada', category: 'Carnes y embutidos', location: 'Congelador', unit: 'unidad', kind: 'insumo', min: 10, demoQty: 40, pack: [10, 'paquete'] },
   { key: 'salami', name: 'Salami', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 0.5, demoQty: 1.248 },
-  { key: 'salchicha_zenu', name: 'Salchicha Zenú', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 1, demoQty: 2 },
+  { key: 'salchicha_zenu', name: 'Salchicha Zenú', category: 'Carnes y embutidos', location: 'Congelador', unit: 'unidad', kind: 'insumo', min: 6, demoQty: 20, pack: [10, 'paquete'] },
   { key: 'tocineta', name: 'Tocineta', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 0.5, demoQty: 1.172 },
-  { key: 'salchicha_mini', name: 'Salchicha mini', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 0.5, demoQty: 1.4 },
+  { key: 'salchicha_mini', name: 'Salchicha mini', category: 'Carnes y embutidos', location: 'Congelador', unit: 'unidad', kind: 'insumo', min: 10, demoQty: 40, pack: [20, 'paquete'] },
   { key: 'maiz', name: 'Maíz tierno', category: 'Verduras y frutas', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 0.5, demoQty: 1.27 },
-  { key: 'papas', name: 'Papas a la francesa', category: 'Verduras y frutas', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 3, demoQty: 9 },
-  { key: 'pechuga_cruda', name: 'Pechuga cruda', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 2, demoQty: 10.85 },
+  { key: 'papas', name: 'Papas a la francesa', category: 'Verduras y frutas', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 3, demoQty: 9, pack: [2500, 'bolsa'], portions: [['porción picada', 200], ['porción salchipapa', 250], ['porción bambino', 120]] },
+  { key: 'pechuga_cruda', name: 'Pechuga cruda', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 2, demoQty: 10.85, portions: [['porción picada', 80], ['porción 150 g', 150], ['porción asado', 300]] },
   { key: 'carne_molida', name: 'Carne molida cruda', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 1, demoQty: 3 },
-  { key: 'cerdo_crudo', name: 'Cerdo crudo', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 1, demoQty: 5.18 },
+  { key: 'cerdo_crudo', name: 'Cerdo crudo', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 1, demoQty: 5.18, portions: [['porción picada', 80], ['porción 150 g', 150], ['porción asado', 300]] },
   { key: 'carne_hamb_gde', name: 'Carne de hamburguesa grande', category: 'Carnes y embutidos', location: 'Congelador', unit: 'unidad', kind: 'insumo', min: 10, demoQty: 25 },
   { key: 'carne_hamb_peq', name: 'Carne de hamburguesa pequeña', category: 'Carnes y embutidos', location: 'Congelador', unit: 'unidad', kind: 'insumo', min: 10, demoQty: 24 },
   { key: 'chorizo_santarrosano', name: 'Chorizo santarrosano', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 0.5, demoQty: 1.5 },
   { key: 'chorizo_espanol', name: 'Chorizo español', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 0.5, demoQty: 1 },
-  { key: 'butifarra', name: 'Butifarra', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 0.5, demoQty: 1.5 },
+  { key: 'butifarra', name: 'Butifarra', category: 'Carnes y embutidos', location: 'Congelador', unit: 'unidad', kind: 'insumo', min: 10, demoQty: 40, pack: [20, 'paquete'] },
   { key: 'cabano', name: 'Cábano', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 0.5, demoQty: 1 },
   // ---- Nevera negra (lo que prepara la cocina y las salsas) ----
   { key: 'masa', name: 'Masa de pizza', category: 'Masas y panes', location: 'Nevera negra', unit: 'kg', kind: 'preparacion', min: 3, demoQty: 9.2 },
   { key: 'pechuga_desmechada', name: 'Pechuga desmechada', category: 'Carnes y embutidos', location: 'Nevera negra', unit: 'kg', kind: 'preparacion', min: 0.8, demoQty: 1.7 },
-  { key: 'pechuga_plancha', name: 'Pechuga a la plancha', category: 'Carnes y embutidos', location: 'Nevera negra', unit: 'kg', kind: 'preparacion', min: 0.8, demoQty: 1.085 },
   { key: 'carne_molida_prep', name: 'Carne molida preparada', category: 'Carnes y embutidos', location: 'Nevera negra', unit: 'kg', kind: 'preparacion', min: 0.5, demoQty: 0.9 },
-  { key: 'cerdo_prep', name: 'Cerdo preparado', category: 'Carnes y embutidos', location: 'Nevera negra', unit: 'kg', kind: 'preparacion', min: 0.5, demoQty: 1.04 },
   { key: 'cebolla_caramelizada', name: 'Cebolla caramelizada', category: 'Verduras y frutas', location: 'Nevera negra', unit: 'g', kind: 'preparacion', min: 300, demoQty: 340 },
   { key: 'cebolla_picada', name: 'Cebolla picada', category: 'Verduras y frutas', location: 'Nevera negra', unit: 'g', kind: 'preparacion', min: 300, demoQty: 650 },
   { key: 'tomate_picado', name: 'Tomate picado', category: 'Verduras y frutas', location: 'Nevera negra', unit: 'g', kind: 'preparacion', min: 300, demoQty: 520 },
   { key: 'salsa_tomate', name: 'Salsa de tomate', category: 'Salsas y aderezos', location: 'Nevera negra', unit: 'g', kind: 'insumo', min: 500, demoQty: 1800 },
-  { key: 'salsa_pina', name: 'Salsa de piña', category: 'Salsas y aderezos', location: 'Nevera negra', unit: 'g', kind: 'insumo', min: 500, demoQty: 1181 },
-  { key: 'salsa_pizza', name: 'Salsa de pizza', category: 'Salsas y aderezos', location: 'Nevera negra', unit: 'ml', kind: 'insumo', min: 1000, demoQty: 2753 },
+  { key: 'salsa_pina', name: 'Salsa de piña', category: 'Salsas y aderezos', location: 'Nevera negra', unit: 'g', kind: 'preparacion', min: 500, demoQty: 1181 },
+  { key: 'salsa_pizza', name: 'Salsa de pizza', category: 'Salsas y aderezos', location: 'Nevera negra', unit: 'ml', kind: 'preparacion', min: 1000, demoQty: 2753 },
   { key: 'salsa_mostaza', name: 'Salsa mostaza', category: 'Salsas y aderezos', location: 'Nevera negra', unit: 'ml', kind: 'insumo', min: 500, demoQty: 1995 },
   { key: 'salsa_ajo', name: 'Salsa de ajo', category: 'Salsas y aderezos', location: 'Nevera negra', unit: 'g', kind: 'insumo', min: 200, demoQty: 265 },
   { key: 'salsa_bbq', name: 'Salsa BBQ', category: 'Salsas y aderezos', location: 'Nevera negra', unit: 'g', kind: 'insumo', min: 300, demoQty: 470 },
   { key: 'mayonesa', name: 'Mayonesa', category: 'Salsas y aderezos', location: 'Nevera negra', unit: 'g', kind: 'insumo', min: 1000, demoQty: 3000 },
-  { key: 'pina_trocitos', name: 'Piña en trocitos', category: 'Verduras y frutas', location: 'Nevera negra', unit: 'g', kind: 'insumo', min: 400, demoQty: 2560 },
-  { key: 'adobo', name: 'Adobo para carnes', category: 'Salsas y aderezos', location: 'Nevera negra', unit: 'g', kind: 'insumo', min: 300, demoQty: 855 },
-  { key: 'salsa_casa', name: 'Salsa de la casa', category: 'Salsas y aderezos', location: 'Nevera negra', unit: 'ml', kind: 'insumo', min: 1000, demoQty: 3000 },
+  { key: 'pina_trocitos', name: 'Piña en trocitos', category: 'Verduras y frutas', location: 'Nevera negra', unit: 'g', kind: 'preparacion', min: 400, demoQty: 2560 },
+  { key: 'adobo', name: 'Adobo para carnes', category: 'Salsas y aderezos', location: 'Nevera negra', unit: 'g', kind: 'preparacion', min: 300, demoQty: 855 },
+  { key: 'salsa_casa', name: 'Salsa de la casa', category: 'Salsas y aderezos', location: 'Nevera negra', unit: 'ml', kind: 'preparacion', min: 1000, demoQty: 3000 },
   { key: 'salsa_ahumada', name: 'Salsa ahumada', category: 'Salsas y aderezos', location: 'Nevera negra', unit: 'ml', kind: 'insumo', min: 300, demoQty: 900 },
   { key: 'salsa_ranchera', name: 'Salsa ranchera', category: 'Salsas y aderezos', location: 'Nevera negra', unit: 'ml', kind: 'insumo', min: 300, demoQty: 800 },
   { key: 'salsa_pesto', name: 'Salsa de pesto', category: 'Salsas y aderezos', location: 'Nevera negra', unit: 'g', kind: 'insumo', min: 300, demoQty: 700 },
@@ -70,12 +73,13 @@ export const CATALOG_ITEMS: CatalogItem[] = [
   { key: 'pepinillos', name: 'Pepinillos', category: 'Verduras y frutas', location: 'Nevera negra', unit: 'g', kind: 'insumo', min: 200, demoQty: 500 },
   { key: 'pimenton_encurtido', name: 'Pimentón encurtido', category: 'Verduras y frutas', location: 'Nevera negra', unit: 'g', kind: 'insumo', min: 200, demoQty: 400 },
   // ---- Nevera Coca-Cola ----
+  { key: 'pina', name: 'Piña entera', category: 'Verduras y frutas', location: 'Nevera Coca-Cola', unit: 'kg', kind: 'insumo', min: 2, demoQty: 6 },
   { key: 'tomate', name: 'Tomate', category: 'Verduras y frutas', location: 'Nevera Coca-Cola', unit: 'kg', kind: 'insumo', min: 1, demoQty: 1.8 },
   { key: 'cebolla', name: 'Cebolla', category: 'Verduras y frutas', location: 'Nevera Coca-Cola', unit: 'kg', kind: 'insumo', min: 1.5, demoQty: 4.575 },
   { key: 'pimenton', name: 'Pimentón', category: 'Verduras y frutas', location: 'Nevera Coca-Cola', unit: 'kg', kind: 'insumo', min: 0.5, demoQty: 0.79 },
   { key: 'lechuga', name: 'Lechuga crespa', category: 'Verduras y frutas', location: 'Nevera Coca-Cola', unit: 'g', kind: 'insumo', min: 300, demoQty: 240 },
-  { key: 'queso_mozzarella', name: 'Queso mozzarella', category: 'Lácteos', location: 'Nevera Coca-Cola', unit: 'kg', kind: 'insumo', min: 3, demoQty: 8.5 },
-  { key: 'queso_costeno', name: 'Queso costeño', category: 'Lácteos', location: 'Nevera Coca-Cola', unit: 'kg', kind: 'insumo', min: 1, demoQty: 2.5 },
+  { key: 'queso_mozzarella', name: 'Queso mozzarella', category: 'Lácteos', location: 'Nevera Coca-Cola', unit: 'g', kind: 'insumo', min: 3000, demoQty: 8500, pack: [2500, 'bloque'] },
+  { key: 'queso_costeno', name: 'Queso costeño', category: 'Lácteos', location: 'Nevera Coca-Cola', unit: 'g', kind: 'insumo', min: 1000, demoQty: 2500, pack: [2000, 'bloque'] },
   { key: 'queso_cheddar', name: 'Queso cheddar (tajadas)', category: 'Lácteos', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 20, demoQty: 60 },
   { key: 'queso_parmesano', name: 'Queso parmesano', category: 'Lácteos', location: 'Nevera Coca-Cola', unit: 'g', kind: 'insumo', min: 200, demoQty: 600 },
   { key: 'champinones', name: 'Champiñones', category: 'Verduras y frutas', location: 'Nevera Coca-Cola', unit: 'g', kind: 'insumo', min: 500, demoQty: 1500 },
@@ -85,15 +89,16 @@ export const CATALOG_ITEMS: CatalogItem[] = [
   { key: 'vino', name: 'Vino de cocina', category: 'Abarrotes', location: 'Nevera Coca-Cola', unit: 'ml', kind: 'insumo', min: 300, demoQty: 605 },
   { key: 'leche', name: 'Leche', category: 'Lácteos', location: 'Nevera Coca-Cola', unit: 'l', kind: 'insumo', min: 2, demoQty: 6 },
   { key: 'limon', name: 'Limón', category: 'Verduras y frutas', location: 'Nevera Coca-Cola', unit: 'kg', kind: 'insumo', min: 1, demoQty: 2.5 },
-  // Bebidas de la carta: cada presentación se cuenta por unidad.
-  { key: 'postobon_125', name: 'Postobón 1,25 L', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 6, demoQty: 12 },
-  { key: 'cocacola_15', name: 'Coca-Cola 1,5 L', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 6, demoQty: 12 },
-  { key: 'hit_litro', name: 'Hit litro', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 6, demoQty: 10 },
-  { key: 'eco_litro', name: 'Eco litro', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 6, demoQty: 10 },
-  { key: 'cocacola_pet', name: 'Coca-Cola Pet', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 12, demoQty: 30 },
-  { key: 'postobon_pet', name: 'Postobón Pet', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 12, demoQty: 30 },
-  { key: 'hit_pet', name: 'Hit Pet', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 12, demoQty: 24 },
-  { key: 'agua_pet', name: 'Agua Pet', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 12, demoQty: 24 },
+  // Bebidas de la carta: cada presentación se cuenta por unidad y llega en pacas (SUGERIDO).
+  // Se controlan en la hoja «Bebidas»: inicio + entrada − vendido = lo que debe quedar.
+  { key: 'postobon_125', name: 'Postobón 1,25 L', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 6, demoQty: 12, pack: [12, 'paca'] },
+  { key: 'cocacola_15', name: 'Coca-Cola 1,5 L', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 6, demoQty: 12, pack: [12, 'paca'] },
+  { key: 'hit_litro', name: 'Hit litro', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 6, demoQty: 10, pack: [12, 'paca'] },
+  { key: 'eco_litro', name: 'Eco litro', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 6, demoQty: 10, pack: [12, 'paca'] },
+  { key: 'cocacola_pet', name: 'Coca-Cola Pet', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 12, demoQty: 30, pack: [12, 'paca'] },
+  { key: 'postobon_pet', name: 'Postobón Pet', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 12, demoQty: 30, pack: [12, 'paca'] },
+  { key: 'hit_pet', name: 'Hit Pet', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 12, demoQty: 24, pack: [12, 'paca'] },
+  { key: 'agua_pet', name: 'Agua Pet', category: 'Bebidas', location: 'Nevera Coca-Cola', unit: 'unidad', kind: 'insumo', min: 12, demoQty: 24, pack: [24, 'paca'] },
   // ---- Bodega seca ----
   { key: 'harina', name: 'Harina de trigo 0000', category: 'Abarrotes', location: 'Bodega seca', unit: 'kg', kind: 'insumo', min: 15, demoQty: 42 },
   { key: 'sal', name: 'Sal', category: 'Abarrotes', location: 'Bodega seca', unit: 'g', kind: 'insumo', min: 500, demoQty: 2500 },
@@ -178,24 +183,6 @@ export const CATALOG_PREPARATIONS: CatalogPreparation[] = [
     instructions: 'Cocinar la pechuga, dejar enfriar y desmechar.',
   },
   {
-    key: 'pechuga_plancha',
-    name: 'Pechuga a la plancha',
-    output: 'pechuga_plancha',
-    mode: 'transformacion',
-    inputs: [['pechuga_cruda', 1000, 'g']],
-    stdOutput: [750, 'g'],
-    instructions: 'Porcionar, adobar y asar a la plancha.',
-  },
-  {
-    key: 'cerdo_prep',
-    name: 'Cerdo preparado',
-    output: 'cerdo_prep',
-    mode: 'transformacion',
-    inputs: [['cerdo_crudo', 1000, 'g']],
-    stdOutput: [700, 'g'],
-    instructions: 'Limpiar, porcionar y cocinar con adobo.',
-  },
-  {
     key: 'carne_molida_prep',
     name: 'Carne molida preparada',
     output: 'carne_molida_prep',
@@ -203,6 +190,72 @@ export const CATALOG_PREPARATIONS: CatalogPreparation[] = [
     inputs: [['carne_molida', 1000, 'g']],
     stdOutput: [800, 'g'],
     instructions: 'Sofreír la carne con sus condimentos.',
+  },
+  // ---- Día de recetas: salsas, adobo y piña (recetas SUGERIDAS: revisar cantidades con el dueño) ----
+  {
+    key: 'pina_trocitos',
+    name: 'Piña en trocitos',
+    output: 'pina_trocitos',
+    mode: 'transformacion',
+    inputs: [['pina', 1000, 'g']],
+    stdOutput: [550, 'g'],
+    instructions: 'Pelar, quitar el corazón y picar en trocitos. La cáscara y el corazón son la merma.',
+  },
+  {
+    key: 'salsa_pina',
+    name: 'Salsa de piña',
+    output: 'salsa_pina',
+    mode: 'lote',
+    inputs: [
+      ['pina_trocitos', 1000, 'g'],
+      ['azucar', 250, 'g'],
+    ],
+    stdOutput: [1000, 'g'],
+    instructions: 'Receta sugerida: cocinar la piña con el azúcar a fuego lento hasta espesar.',
+  },
+  {
+    key: 'salsa_pizza',
+    name: 'Salsa de pizza',
+    output: 'salsa_pizza',
+    mode: 'lote',
+    inputs: [
+      ['tomate', 2000, 'g'],
+      ['ajo', 30, 'g'],
+      ['oregano', 10, 'g'],
+      ['sal', 20, 'g'],
+      ['azucar', 20, 'g'],
+      ['aceite', 50, 'ml'],
+    ],
+    stdOutput: [1500, 'ml'],
+    instructions: 'Receta sugerida: licuar el tomate con el ajo y cocinar con los condimentos.',
+  },
+  {
+    key: 'salsa_casa',
+    name: 'Salsa de la casa',
+    output: 'salsa_casa',
+    mode: 'lote',
+    inputs: [
+      ['mayonesa', 1000, 'g'],
+      ['salsa_mostaza', 100, 'ml'],
+      ['ajo', 15, 'g'],
+    ],
+    stdOutput: [1100, 'ml'],
+    instructions: 'Receta sugerida: mezclar la mayonesa con la mostaza y el ajo machacado.',
+  },
+  {
+    key: 'adobo',
+    name: 'Adobo para carnes',
+    output: 'adobo',
+    mode: 'lote',
+    inputs: [
+      ['cebolla', 500, 'g'],
+      ['ajo', 100, 'g'],
+      ['aceite', 200, 'ml'],
+      ['sal', 60, 'g'],
+      ['oregano', 10, 'g'],
+    ],
+    stdOutput: [750, 'g'],
+    instructions: 'Receta sugerida: licuar todo. Se usa al porcionar la pechuga y el cerdo.',
   },
 ];
 
@@ -281,7 +334,7 @@ const PIZZAS: { key: string; name: string; line: string; description: string; to
   },
   {
     key: 'cartagenera', name: 'Cartagenera', line: 'Exclusive Ndiana', description: 'Mozzarella, chorizo, butifarra, maíz y ajo.', weight: 4,
-    toppings: [['chorizo_santacruz', 60, 'g'], ['butifarra', 60, 'g'], ['maiz', 40, 'g'], ['ajo', 5, 'g']],
+    toppings: [['chorizo_santacruz', 60, 'g'], ['butifarra', 1, 'unidad'], ['maiz', 40, 'g'], ['ajo', 5, 'g']],
   },
   {
     key: 'carnavalera', name: 'Carnavalera', line: 'Exclusive Ndiana', description: 'Mozzarella, jamón, salami, cábano, tomate, cebolla y pimentón finamente picados.', weight: 2,
@@ -338,6 +391,7 @@ const pizzaProducts: CatalogProduct[] = PIZZAS.flatMap((p) =>
 
 // ---- Picadas y salchipapas: por número de personas, como en la carta ----
 // La receta base es para UNA persona; en los tamaños grandes rinde un poco menos por persona.
+// Lo que va por unidad (salchichas, chorizos) se redondea: la salchipapa para 2 lleva 2 salchichas.
 const forPeople = (
   key: string,
   name: string,
@@ -382,7 +436,7 @@ export const CATALOG_PRODUCTS: CatalogProduct[] = [
     key: 'hamb_paisa', name: 'Hamburguesa Burger paisa', category: 'Hamburguesas', type: 'preparado', weight: 6,
     description: 'Pan brioche, salsa de la casa, cebolla crispi, carne, chorizo, cheddar, tomate, cebolla, lechuga y mozzarella.',
     recipe: [
-      ['pan_hamburguesa', 1, 'unidad'], ['salsa_casa', 25, 'ml'], ['cebolla_crispi', 20, 'g'], ['carne_hamb_gde', 1, 'unidad'], ['chorizo_parrillada', 60, 'g'],
+      ['pan_hamburguesa', 1, 'unidad'], ['salsa_casa', 25, 'ml'], ['cebolla_crispi', 20, 'g'], ['carne_hamb_gde', 1, 'unidad'], ['chorizo_parrillada', 1, 'unidad'],
       ['queso_cheddar', 1, 'unidad'], ['tomate', 40, 'g'], ['cebolla_picada', 20, 'g'], ['lechuga', 20, 'g'], ['queso_mozzarella', 40, 'g'],
     ],
   },
@@ -406,7 +460,7 @@ export const CATALOG_PRODUCTS: CatalogProduct[] = [
     key: 'hamb_pollo', name: 'Hamburguesa de pollo', category: 'Hamburguesas', type: 'preparado', weight: 6,
     description: 'Pan brioche, salsa de la casa, pechuga, tocineta, mozzarella, tomate, cebolla y lechuga.',
     recipe: [
-      ['pan_hamburguesa', 1, 'unidad'], ['salsa_casa', 25, 'ml'], ['pechuga_plancha', 150, 'g'], ['tocineta', 30, 'g'], ['queso_mozzarella', 40, 'g'],
+      ['pan_hamburguesa', 1, 'unidad'], ['salsa_casa', 25, 'ml'], ['pechuga_cruda', 150, 'g'], ['tocineta', 30, 'g'], ['queso_mozzarella', 40, 'g'],
       ['tomate', 40, 'g'], ['cebolla_picada', 20, 'g'], ['lechuga', 20, 'g'],
     ],
   },
@@ -423,7 +477,7 @@ export const CATALOG_PRODUCTS: CatalogProduct[] = [
     key: 'perro_chorizo_diana', name: 'Perro Chorizo Diana', category: 'Perros', type: 'preparado', weight: 6,
     description: 'Pan brioche, salsa de la casa, chorizo parrillada, lechuga, cebolla caramelizada, cheddar, mozzarella, cebolla crispi y tocineta.',
     recipe: [
-      ['pan_perro', 1, 'unidad'], ['salsa_casa', 25, 'ml'], ['chorizo_parrillada', 120, 'g'], ['lechuga', 15, 'g'], ['cebolla_caramelizada', 30, 'g'],
+      ['pan_perro', 1, 'unidad'], ['salsa_casa', 25, 'ml'], ['chorizo_parrillada', 1, 'unidad'], ['lechuga', 15, 'g'], ['cebolla_caramelizada', 30, 'g'],
       ['queso_cheddar', 1, 'unidad'], ['queso_mozzarella', 40, 'g'], ['cebolla_crispi', 15, 'g'], ['tocineta', 25, 'g'],
     ],
   },
@@ -431,58 +485,75 @@ export const CATALOG_PRODUCTS: CatalogProduct[] = [
     key: 'perro_super', name: 'Perro Super', category: 'Perros', type: 'preparado', weight: 7,
     description: 'Pan brioche, salsa de la casa, salchicha long Zenú, lechuga, cebolla caramelizada, mozzarella y cebolla crispi.',
     recipe: [
-      ['pan_perro', 1, 'unidad'], ['salsa_casa', 25, 'ml'], ['salchicha_zenu', 90, 'g'], ['lechuga', 15, 'g'], ['cebolla_caramelizada', 30, 'g'],
+      ['pan_perro', 1, 'unidad'], ['salsa_casa', 25, 'ml'], ['salchicha_zenu', 1, 'unidad'], ['lechuga', 15, 'g'], ['cebolla_caramelizada', 30, 'g'],
       ['queso_mozzarella', 40, 'g'], ['cebolla_crispi', 15, 'g'],
     ],
   },
   {
     key: 'bambinoperro', name: 'Bambinoperro', category: 'Perros', type: 'preparado', weight: 5,
     description: 'Pan suave, salchicha, tomate, cebolla, lechuga y mozzarella.',
-    recipe: [['pan_suave', 1, 'unidad'], ['salchicha_mini', 50, 'g'], ['tomate', 15, 'g'], ['cebolla_picada', 15, 'g'], ['lechuga', 10, 'g'], ['queso_mozzarella', 25, 'g']],
+    recipe: [['pan_suave', 1, 'unidad'], ['salchicha_mini', 1, 'unidad'], ['tomate', 15, 'g'], ['cebolla_picada', 15, 'g'], ['lechuga', 10, 'g'], ['queso_mozzarella', 25, 'g']],
   },
   // ---- Asados especiales ----
   {
     key: 'asado_pechuga', name: 'Asado de pechuga', category: 'Asados', type: 'preparado', weight: 6,
     description: 'Papas francesas, 300 g de pechuga y ensalada (tomate, lechuga crespa, uchuvas y vinagreta de la casa).',
-    recipe: [['papas', 200, 'g'], ['pechuga_plancha', 300, 'g'], ...ENSALADA],
+    recipe: [['papas', 200, 'g'], ['pechuga_cruda', 300, 'g'], ...ENSALADA],
   },
   {
     key: 'asado_cerdo', name: 'Asado de cerdo', category: 'Asados', type: 'preparado', weight: 5,
     description: 'Papas francesas, 300 g de cerdo y ensalada (tomate, lechuga crespa, uchuvas y vinagreta de la casa).',
-    recipe: [['papas', 200, 'g'], ['cerdo_prep', 300, 'g'], ...ENSALADA],
+    recipe: [['papas', 200, 'g'], ['cerdo_crudo', 300, 'g'], ...ENSALADA],
   },
   {
     key: 'asado_bambino_pechuga', name: 'Asado bambino de pechuga', category: 'Asados', type: 'preparado', weight: 3,
     description: 'Papa francesa, pechuga y ensalada.',
-    recipe: [['papas', 120, 'g'], ['pechuga_plancha', 150, 'g'], ...ENSALADA_BAMBINO],
+    recipe: [['papas', 120, 'g'], ['pechuga_cruda', 150, 'g'], ...ENSALADA_BAMBINO],
   },
   {
     key: 'asado_bambino_cerdo', name: 'Asado bambino de cerdo', category: 'Asados', type: 'preparado', weight: 3,
     description: 'Papa francesa, cerdo y ensalada.',
-    recipe: [['papas', 120, 'g'], ['cerdo_prep', 150, 'g'], ...ENSALADA_BAMBINO],
+    recipe: [['papas', 120, 'g'], ['cerdo_crudo', 150, 'g'], ...ENSALADA_BAMBINO],
   },
   // ---- Exclusive fast food ----
   {
     key: 'chori_papa', name: 'Chori papa artesanal', category: 'Picadas', type: 'preparado', weight: 6,
     description: 'Papa francesa, salsa ahumada, chorizo casero salteado con cebollas, mozzarella y maíz.',
     recipe: [
-      ['papas', 300, 'g'], ['salsa_ahumada', 30, 'ml'], ['chorizo_parrillada', 150, 'g'], ['cebolla_picada', 40, 'g'], ['queso_mozzarella', 60, 'g'], ['maiz', 40, 'g'],
+      ['papas', 300, 'g'], ['salsa_ahumada', 30, 'ml'], ['chorizo_parrillada', 2, 'unidad'], ['cebolla_picada', 40, 'g'], ['queso_mozzarella', 60, 'g'], ['maiz', 40, 'g'],
     ],
   },
-  ...forPeople(
-    'picadita_mix',
-    'Picadita mix',
-    'Picadas',
-    'Papas, salsa de la casa, lechuga, pollo, chorizo, butifarra y queso (mozzarella o costeño, a elección).',
-    [['papas', 200, 'g'], ['salsa_casa', 25, 'ml'], ['lechuga', 15, 'g'], ['pechuga_plancha', 80, 'g'], ['chorizo_parrillada', 70, 'g'], ['butifarra', 50, 'g'], ['queso_mozzarella', 50, 'g']],
-    [[1, 1, 5], [2, 1.9, 4], [4, 3.2, 2]],
-  ),
+  // Las carnes frías van por UNIDAD, como se sirven: la de 21 lleva 2 butifarras y 1 chorizo,
+  // la de 40 lleva 2 chorizos y 2 butifarras. Pollo y papas van en porciones; el queso, en gramos.
+  ...(
+    [
+      [1, 5, 1, 1],
+      [2, 4, 2, 1],
+      [4, 2, 2, 2],
+    ] as const
+  ).map(([people, weight, butifarras, chorizos]) => ({
+    key: `picadita_mix_${people}`,
+    name: `Picadita mix para ${people}`,
+    category: 'Picadas',
+    type: 'preparado' as const,
+    weight,
+    description: 'Papas, salsa de la casa, lechuga, pollo, chorizo, butifarra y queso (mozzarella o costeño, a elección).',
+    recipe: [
+      ['papas', 200 * people, 'g'],
+      ['salsa_casa', 25 * people, 'ml'],
+      ['lechuga', 15 * people, 'g'],
+      ['pechuga_cruda', 80 * people, 'g'],
+      ['butifarra', butifarras, 'unidad'],
+      ['chorizo_parrillada', chorizos, 'unidad'],
+      ['queso_mozzarella', 50 * people, 'g'],
+    ] as Line[],
+  })),
   ...forPeople(
     'salchipapa',
     'Salchipapa tradicional',
     'Salchipapas',
     'Papas a la francesa, salsa de la casa, salchicha y mozzarella.',
-    [['papas', 250, 'g'], ['salsa_casa', 30, 'ml'], ['salchicha_manguera', 100, 'g'], ['queso_mozzarella', 50, 'g']],
+    [['papas', 250, 'g'], ['salsa_casa', 30, 'ml'], ['salchicha_manguera', 1, 'unidad'], ['queso_mozzarella', 50, 'g']],
     [[1, 1, 10], [2, 1.75, 5]],
   ),
   ...forPeople(
@@ -491,7 +562,7 @@ export const CATALOG_PRODUCTS: CatalogProduct[] = [
     'Picadas',
     'Papas, salsas de la casa, lechuga, pollo, cerdo, chorizo artesanal salteado con cebolla, maíz y papa ripio.',
     [
-      ['papas', 150, 'g'], ['salsa_casa', 20, 'ml'], ['lechuga', 15, 'g'], ['pechuga_plancha', 70, 'g'], ['cerdo_prep', 70, 'g'], ['chorizo_parrillada', 60, 'g'],
+      ['papas', 150, 'g'], ['salsa_casa', 20, 'ml'], ['lechuga', 15, 'g'], ['pechuga_cruda', 80, 'g'], ['cerdo_crudo', 80, 'g'], ['chorizo_parrillada', 0.5, 'unidad'],
       ['cebolla_picada', 20, 'g'], ['maiz', 20, 'g'], ['papa_ripio', 15, 'g'],
     ],
     [[3, 3, 2], [4, 4, 2], [6, 6, 1]],
@@ -566,4 +637,49 @@ export const CATALOG_PRODUCTS: CatalogProduct[] = [
       recipe: scale(recipe, s.factor),
     })),
   ),
+];
+
+/** Unidad pequeña en que se escriben el paquete y las porciones del catálogo. */
+const smallOf = (u: Unit): Unit => (u === 'kg' ? 'g' : u === 'l' ? 'ml' : u);
+
+/**
+ * Lo que se le manda a «crear artículo» para un artículo del catálogo, con su presentación
+ * (cómo viene) y sus porciones. `qty` es la existencia inicial (0 en lo real, demoQty en la DEMO).
+ */
+export function catalogItemBody(c: CatalogItem, idx: number, qty: number): Record<string, unknown> {
+  return {
+    name: c.name,
+    category: c.category,
+    unit: c.unit,
+    qty,
+    min: c.min,
+    location: c.location,
+    kind: c.kind,
+    sort_order: (idx + 1) * 10,
+    pack_size: c.pack?.[0] ?? null,
+    pack_unit: c.pack ? smallOf(c.unit) : undefined,
+    pack_label: c.pack?.[1],
+    portions: (c.portions ?? []).map(([label, size]) => ({ label, size, unit: smallOf(c.unit) })),
+  };
+}
+
+/**
+ * Qué prepara la cocina cada día (0 = domingo). El martes es el DÍA DE RECETAS: carne molida,
+ * salsas, adobo y piña. La piña en trocitos va antes que la salsa de piña porque la usa.
+ */
+export const CATALOG_WEEK_PLAN: Record<number, string[]> = {
+  1: ['masa', 'cebolla_caramelizada', 'tomate_picado'],
+  2: ['carne_molida_prep', 'adobo', 'salsa_pizza', 'salsa_casa', 'pina_trocitos', 'salsa_pina'],
+  3: ['pechuga_desmechada', 'cebolla_picada'],
+  4: ['tomate_picado', 'masa'],
+  5: ['masa', 'cebolla_caramelizada', 'pechuga_desmechada'],
+  6: ['tomate_picado', 'cebolla_picada'],
+  0: ['cebolla_picada', 'tomate_picado'],
+};
+
+/** Porcionado de cada mañana en la DEMO: [artículo, [cuántas de cada porción], merma en % de lo porcionado]. */
+export const DEMO_PORTIONING: [key: string, counts: number[], mermaPct: number][] = [
+  ['pechuga_cruda', [10, 3, 2], 7],
+  ['cerdo_crudo', [8, 2, 2], 9],
+  ['papas', [8, 6, 4], 0],
 ];

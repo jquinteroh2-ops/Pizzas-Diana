@@ -2,7 +2,7 @@
 import { type DB, tx, isDemoMode } from '../db.ts';
 import { conflict } from '../errors.ts';
 import { localDate } from '../../shared/dates.ts';
-import { CATALOG_ITEMS, CATALOG_PREPARATIONS, CATALOG_PRODUCTS } from '../../shared/catalog.ts';
+import { CATALOG_ITEMS, CATALOG_PREPARATIONS, CATALOG_PRODUCTS, catalogItemBody } from '../../shared/catalog.ts';
 import { createItem, type Item } from './inventory.ts';
 import { createPreparation, listProductions } from './preparations.ts';
 import { createProduct } from './products.ts';
@@ -42,16 +42,8 @@ export function loadCatalog(db: DB, admin: User) {
         itemId[c.key] = found.id;
         return;
       }
-      const it: Item = createItem(db, admin, {
-        name: c.name,
-        category: c.category,
-        unit: c.unit,
-        qty: 0,
-        min: c.min,
-        location: c.location,
-        kind: c.kind,
-        sort_order: (idx + 1) * 10,
-      });
+      // Con su presentación y porciones sugeridas: el administrador las ajusta en Inventario.
+      const it: Item = createItem(db, admin, catalogItemBody(c, idx, 0));
       itemId[c.key] = it.id;
       items++;
     });

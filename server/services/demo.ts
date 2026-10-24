@@ -6,7 +6,8 @@
 import { type DB, tx, setSetting, isDemoMode } from '../db.ts';
 import { conflict } from '../errors.ts';
 import { addDays, localDate, weekStart } from '../../shared/dates.ts';
-import { CATALOG_ITEMS, CATALOG_PREPARATIONS, CATALOG_PRODUCTS } from '../../shared/catalog.ts';
+import { CATALOG_ITEMS, CATALOG_PREPARATIONS, CATALOG_PRODUCTS, CATALOG_WEEK_PLAN, DEMO_PORTIONING, catalogItemBody } from '../../shared/catalog.ts';
+import { registerPortioning } from './portioning.ts';
 import { createItem, registerEntry, getItem } from './inventory.ts';
 import { createProduct } from './products.ts';
 import { annulSale, previewSale, registerSale } from './sales.ts';
@@ -57,16 +58,8 @@ export function demoStatus(db: DB) {
   };
 }
 
-/** Qué prepara la cocina cada día de la semana (0 = domingo). Así trabaja Pizza Diana: cada día algo distinto. */
-export const DEMO_WEEK_PLAN: Record<number, string[]> = {
-  1: ['masa', 'cebolla_caramelizada', 'tomate_picado'],
-  2: ['pechuga_desmechada', 'cebolla_picada'],
-  3: ['cerdo_prep', 'pechuga_plancha'],
-  4: ['tomate_picado', 'carne_molida_prep'],
-  5: ['masa', 'cebolla_caramelizada', 'pechuga_desmechada'],
-  6: ['tomate_picado', 'pechuga_plancha'],
-  0: ['cebolla_picada', 'cerdo_prep'],
-};
+/** Qué prepara la cocina cada día de la semana (0 = domingo). El martes es el día de recetas. */
+export const DEMO_WEEK_PLAN = CATALOG_WEEK_PLAN;
 
 export function loadDemo(db: DB, admin: User, now = new Date()) {
   const real = realDataCounts(db);
@@ -96,24 +89,7 @@ export function loadDemo(db: DB, admin: User, now = new Date()) {
     // ---- Catálogo ----
     const itemId: Record<string, number> = {};
     CATALOG_ITEMS.forEach((c, idx) => {
-      itemId[c.key] = createItem(
-        db,
-        admin,
-        {
-          name: c.name,
-          category: c.category,
-          unit: c.unit,
-          qty: c.demoQty,
-          min: c.min,
-          location: c.location,
-          kind: c.kind,
-          sort_order: (idx + 1) * 10,
-          pack_size: c.demoPack?.[0] ?? null,
-          pack_unit: c.demoPack ? (c.unit === 'kg' ? 'g' : c.unit === 'l' ? 'ml' : c.unit) : undefined,
-          pack_label: c.demoPack?.[1],
-        },
-        { at: t0 },
-      ).id;
+      itemId[c.key] = createItem(db, admin, catalogItemBody(c, idx, c.demoQty), { at: t0 }).id;
     });
     const prepId: Record<string, number> = {};
     for (const p of CATALOG_PREPARATIONS) {
@@ -152,14 +128,17 @@ export function loadDemo(db: DB, admin: User, now = new Date()) {
       registerEntry(db, admin, id, { qty, unit: c.unit, reason }, { at });
     };
 
-    /** La cocina prepara un lote; si no alcanza un insumo, primero se compra. */
-    const produce = (key: string, at: string, cook: User, size = 1) => {
+    /** La cocina prepara un lote; si no alcanza un insumo, primero se compra (o se prepara, si es de la cocina). */
+    const produce = (key: string, at: string, cook: User, size = 1, depth = 0): unknown => {
       const prep = getPreparation(db, prepId[key]);
       const base = prep.inputs[0];
       const baseQ = Math.round(base.qty_m * size * (prep.mode === 'lote' ? 1 : 2 + Math.floor(rand() * 3)));
       const factor = baseQ / base.qty_m;
       for (const i of prep.inputs) {
         const need = Math.round(i.qty_m * factor);
+        const sub = prepByOutput.get(i.item_id);
+        let guard = 0;
+        while (sub && depth < 2 && getItem(db, i.item_id).qty_m < need && guard++ < 4) produce(sub, at, cook, 1, depth + 1);
         const have = getItem(db, i.item_id).qty_m;
         if (have < need) buy(i.item_id, need - have, at, 'Compra urgente (DEMO)');
       }
@@ -240,6 +219,18 @@ export function loadDemo(db: DB, admin: User, now = new Date()) {
         if (new Date(at) > now) return;
         produce(key, at, pickOne(cooks));
       });
+
+      // Porcionado de la mañana: pechuga, cerdo y papas en sus porciones (solo sale la merma).
+      const portionAt = bogota(day, 10, 30);
+      if (new Date(portionAt) <= now) {
+        for (const [key, counts, pct] of DEMO_PORTIONING) {
+          const it = getItem(db, itemId[key]);
+          const output = it.portions.reduce((sum, p, k) => sum + p.size_m * (counts[k] ?? 0), 0);
+          const merma = Math.round((output * pct * (0.7 + rand() * 0.6)) / 100 / 1000);
+          if (it.qty_m < output + merma * 1000) buy(it.id, output + merma * 1000 - it.qty_m, portionAt, 'Compra urgente (DEMO)');
+          registerPortioning(db, pickOne(cooks), { item_id: it.id, portions: counts, merma }, { at: portionAt, isDemo: true });
+        }
+      }
 
       // Ventas del día.
       const weekend = dow === 5 || dow === 6 || dow === 0;
@@ -341,6 +332,7 @@ export function clearDemo(db: DB) {
   return tx(db, () => {
     db.exec(`
       DELETE FROM prep_tasks WHERE is_demo = 1;
+      DELETE FROM portionings WHERE is_demo = 1;
       DELETE FROM productions WHERE is_demo = 1;
       DELETE FROM wastes WHERE is_demo = 1;
       DELETE FROM shortages WHERE is_demo = 1;

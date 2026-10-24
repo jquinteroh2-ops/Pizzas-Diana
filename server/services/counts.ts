@@ -5,9 +5,20 @@
 import { type DB, nowIso, tx, isDemoMode } from '../db.ts';
 import { bad, conflict, notFound, oneOf, optStr, num } from '../errors.ts';
 import { compatible, isUnit, toMilli, type BaseUnit, type Unit } from '../../shared/units.ts';
-import { COUNT_KINDS, COUNT_STATUSES, LOCATIONS, realConsumption, type CountKind, type CountStatus, type Location } from '../../shared/kitchen.ts';
+import {
+  COUNT_KINDS,
+  COUNT_STATUSES,
+  LOCATIONS,
+  countInput,
+  realConsumption,
+  type CountDetail,
+  type CountKind,
+  type CountStatus,
+  type Location,
+  type Portion,
+} from '../../shared/kitchen.ts';
 import { addDays, isYmd, localDate } from '../../shared/dates.ts';
-import { applyMovement } from './inventory.ts';
+import { applyMovement, parseJson } from './inventory.ts';
 import { can, type User } from './users.ts';
 
 export interface CountSheetLine {
@@ -18,6 +29,7 @@ export interface CountSheetLine {
   qty_m: number;
   pack_size_m: number;
   pack_label: string;
+  portions: Portion[];
   kind: string;
 }
 
@@ -26,11 +38,11 @@ export function countSheet(db: DB, location: unknown): { location: Location; lin
   const loc = oneOf(location, 'ubicación', LOCATIONS);
   const lines = db
     .prepare(
-      `SELECT id item_id, name, unit, base_unit, qty_m, pack_size_m, pack_label, kind FROM items
+      `SELECT id item_id, name, unit, base_unit, qty_m, pack_size_m, pack_label, portions, kind FROM items
        WHERE active = 1 AND location = ? ORDER BY sort_order, name COLLATE NOCASE`,
     )
-    .all(loc) as unknown as CountSheetLine[];
-  return { location: loc, lines };
+    .all(loc) as unknown as (Omit<CountSheetLine, 'portions'> & { portions: string })[];
+  return { location: loc, lines: lines.map((l) => ({ ...l, portions: parseJson<Portion[]>(l.portions, []) })) };
 }
 
 export interface CountLineView {
@@ -41,6 +53,8 @@ export interface CountLineView {
   expected_m: number;
   counted_m: number;
   diff_m: number;
+  /** Cómo se contó: paquetes + porciones + suelto (null en conteos viejos o escritos en total). */
+  detail: CountDetail | null;
 }
 
 export interface CountView {
@@ -72,11 +86,11 @@ export function getCount(db: DB, user: User, id: number): CountView {
   if (!c || (!can(user, 'kitchen.manage') && c.counted_by !== user.id)) throw notFound('Conteo no encontrado.');
   const lines = db
     .prepare(
-      `SELECT l.item_id, l.item_name, i.unit, i.base_unit, l.expected_m, l.counted_m, l.counted_m - l.expected_m diff_m
+      `SELECT l.item_id, l.item_name, i.unit, i.base_unit, l.expected_m, l.counted_m, l.counted_m - l.expected_m diff_m, l.detail
        FROM count_lines l JOIN items i ON i.id = l.item_id WHERE l.count_id = ? ORDER BY i.sort_order, l.item_name COLLATE NOCASE`,
     )
-    .all(id) as unknown as CountLineView[];
-  return { ...c, lines };
+    .all(id) as unknown as (Omit<CountLineView, 'detail'> & { detail: string | null })[];
+  return { ...c, lines: lines.map((l) => ({ ...l, detail: parseJson<CountDetail | null>(l.detail, null) })) };
 }
 
 export function listCounts(db: DB, user: User, q: { status?: string; limit?: number }): CountView[] {
@@ -97,7 +111,8 @@ export function listCounts(db: DB, user: User, q: { status?: string; limit?: num
 }
 
 /**
- * Enviar un conteo: { location, lines: [{item_id, qty, unit}], note }.
+ * Enviar un conteo: { location, lines: [{item_id, packs?, portions?, loose?} | {item_id, qty, unit}], note }.
+ * Cada producto se cuenta UNA vez aunque esté en paquetes, porciones y suelto.
  * Los productos que no se escriban no se cuentan. Si lo envía el administrador se aplica de una vez.
  */
 export function submitCount(db: DB, user: User, body: Record<string, unknown>, opts: { at?: string; isDemo?: boolean } = {}): CountView {
@@ -106,15 +121,18 @@ export function submitCount(db: DB, user: User, body: Record<string, unknown>, o
   const raw = body.lines;
   if (!Array.isArray(raw)) throw bad('El conteo no es válido.');
   const seen = new Set<number>();
-  const lines: { item: CountSheetLine; countedM: number }[] = [];
+  const lines: { item: CountSheetLine; countedM: number; detail: CountDetail | null }[] = [];
   for (const l of raw as Record<string, unknown>[]) {
     const item = byId.get(Number(l?.item_id));
     if (!item) throw bad(`Un producto del conteo no está en ${sheet.location}.`);
     if (seen.has(item.item_id)) throw bad(`"${item.name}" está repetido en el conteo.`);
     seen.add(item.item_id);
-    const unit = l.unit ?? item.unit;
-    if (!isUnit(unit) || !compatible(unit, item.unit)) throw bad(`La unidad no es compatible con "${item.name}".`);
-    lines.push({ item, countedM: toMilli(num(l.qty, `cantidad de ${item.name}`, { max: 1e7 }), unit) });
+    const parse = (qty: unknown, u: unknown) => {
+      const unit = u ?? item.unit;
+      if (!isUnit(unit) || !compatible(unit, item.unit)) throw bad(`La unidad no es compatible con "${item.name}".`);
+      return toMilli(num(qty, `cantidad de ${item.name}`, { max: 1e7 }), unit);
+    };
+    lines.push({ item, ...countInput(item, l, parse, (m) => bad(m)) });
   }
   if (lines.length === 0) throw bad('Escribe la cantidad de al menos un producto.');
   const note = optStr(body.note, 'nota', 300);
@@ -138,8 +156,8 @@ export function submitCount(db: DB, user: User, body: Record<string, unknown>, o
       .prepare('INSERT INTO counts(location, kind, note, counted_by, counted_at, local_date, is_demo) VALUES (?,?,?,?,?,?,?)')
       .run(sheet.location, kind, note, user.id, at, localDate(new Date(at)), isDemo ? 1 : 0);
     const id = Number(r.lastInsertRowid);
-    const ins = db.prepare('INSERT INTO count_lines(count_id, item_id, item_name, expected_m, counted_m) VALUES (?,?,?,?,?)');
-    for (const l of lines) ins.run(id, l.item.item_id, l.item.name, l.item.qty_m, l.countedM);
+    const ins = db.prepare('INSERT INTO count_lines(count_id, item_id, item_name, expected_m, counted_m, detail) VALUES (?,?,?,?,?,?)');
+    for (const l of lines) ins.run(id, l.item.item_id, l.item.name, l.item.qty_m, l.countedM, l.detail ? JSON.stringify(l.detail) : null);
     if (can(user, 'kitchen.manage') && body.apply !== false) applyCount(db, user, id, at);
     return getCount(db, user, id);
   });
@@ -219,6 +237,8 @@ export interface ReconciliationLine {
   produced_m: number;
   used_m: number;
   waste_m: number;
+  /** Merma que se botó al porcionar. */
+  trim_m: number;
   close_m: number;
   /** Lo que de verdad gastó la cocina según la apertura y el cierre. */
   real_m: number;
@@ -262,9 +282,11 @@ export function reconciliation(db: DB, date: unknown) {
       const produced = get('produccion', 'pos');
       const used = get('produccion', 'neg');
       const waste = get('baja', 'neg');
+      // Si se anula un porcionado, la merma vuelve: se resta lo devuelto.
+      const trim = get('porcionado', 'neg') - get('porcionado', 'pos');
       // Una venta anulada devuelve lo que había descontado.
       const sales = get('venta', 'neg') - get('anulacion', 'pos');
-      const real = realConsumption({ openM: o.counted_m, closeM, entriesM: entries, producedM: produced, usedForPrepM: used, wasteM: waste });
+      const real = realConsumption({ openM: o.counted_m, closeM, entriesM: entries, producedM: produced, usedForPrepM: used, wasteM: waste, trimM: trim });
       lines.push({
         item_id: o.item_id,
         name: o.name,
@@ -276,6 +298,7 @@ export function reconciliation(db: DB, date: unknown) {
         produced_m: produced,
         used_m: used,
         waste_m: waste,
+        trim_m: trim,
         close_m: closeM,
         real_m: real,
         sales_m: sales,
@@ -289,12 +312,18 @@ export function reconciliation(db: DB, date: unknown) {
 export interface InventorySheetLine {
   item_id: number;
   name: string;
+  category: string;
   unit: Unit;
   base_unit: BaseUnit;
   pack_size_m: number;
   pack_label: string;
+  portions: Portion[];
   /** Inicio: lo contado en la apertura (null si aún no se contó). */
   open_m: number | null;
+  /** Cómo se contó el inicio y el fin (paquetes + porciones + suelto). */
+  open_detail: CountDetail | null;
+  close_detail: CountDetail | null;
+  prev_close_detail: CountDetail | null;
   /** Entrada: lo que llegó (compras) en el día. */
   entries_m: number;
   /** Lo que la cocina preparó de este producto en el día (solo preparaciones). */
@@ -311,10 +340,10 @@ export interface InventorySheetLine {
 
 const bogotaStart = (ymd: string) => new Date(`${ymd}T00:00:00-05:00`).toISOString();
 
-function countValues(db: DB, countId: number | undefined): Map<number, number> | null {
+function countValues(db: DB, countId: number | undefined): Map<number, { m: number; detail: CountDetail | null }> | null {
   if (!countId) return null;
-  const rows = db.prepare('SELECT item_id, counted_m FROM count_lines WHERE count_id = ?').all(countId) as { item_id: number; counted_m: number }[];
-  return new Map(rows.map((r) => [r.item_id, r.counted_m]));
+  const rows = db.prepare('SELECT item_id, counted_m, detail FROM count_lines WHERE count_id = ?').all(countId) as { item_id: number; counted_m: number; detail: string | null }[];
+  return new Map(rows.map((r) => [r.item_id, { m: r.counted_m, detail: parseJson<CountDetail | null>(r.detail, null) }]));
 }
 
 /**
@@ -338,26 +367,33 @@ export function inventorySheet(db: DB, user: User, date: unknown) {
     const to = s.cierre && s.cierre.counted_at > from ? s.cierre.counted_at : bogotaStart(addDays(date, 1));
     const items = db
       .prepare(
-        `SELECT id item_id, name, unit, base_unit, pack_size_m, pack_label FROM items
+        `SELECT id item_id, name, category, unit, base_unit, pack_size_m, pack_label, portions FROM items
          WHERE active = 1 AND location = ? ORDER BY sort_order, name COLLATE NOCASE`,
       )
-      .all(s.location) as unknown as Omit<InventorySheetLine, 'open_m' | 'entries_m' | 'produced_m' | 'close_m' | 'consumption_m' | 'sales_m' | 'prev_close_m'>[];
-    const lines: InventorySheetLine[] = items.map((i) => {
+      .all(s.location) as unknown as { item_id: number; name: string; category: string; unit: Unit; base_unit: BaseUnit; pack_size_m: number; pack_label: string; portions: string }[];
+    const lines: InventorySheetLine[] = items.map((row) => {
+      const i = { ...row, portions: parseJson<Portion[]>(row.portions, []) };
       const by = new Map((sums.all(i.item_id, from, to) as { type: string; pos: number; neg: number }[]).map((r) => [r.type, r]));
       const entries = by.get('entrada')?.pos ?? 0;
       const produced = by.get('produccion')?.pos ?? 0;
       const sales = (by.get('venta')?.neg ?? 0) - (by.get('anulacion')?.pos ?? 0);
-      const openM = open?.get(i.item_id) ?? null;
-      const closeM = close?.get(i.item_id) ?? null;
+      const o = open?.get(i.item_id);
+      const c = close?.get(i.item_id);
+      const p = prevClose?.get(i.item_id);
+      const openM = o?.m ?? null;
+      const closeM = c?.m ?? null;
       return {
         ...i,
         open_m: openM,
+        open_detail: o?.detail ?? null,
+        close_detail: c?.detail ?? null,
+        prev_close_detail: p?.detail ?? null,
         entries_m: entries,
         produced_m: produced,
         close_m: closeM,
         consumption_m: openM !== null && closeM !== null ? openM + entries + produced - closeM : null,
         sales_m: admin ? sales : null,
-        prev_close_m: prevClose?.get(i.item_id) ?? null,
+        prev_close_m: p?.m ?? null,
       };
     });
     return { location: s.location, apertura: s.apertura, cierre: s.cierre, lines };

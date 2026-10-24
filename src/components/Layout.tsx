@@ -21,6 +21,9 @@ import {
   Trash2,
   History,
   ChevronDown,
+  PackageCheck,
+  Scissors,
+  CupSoda,
   type LucideIcon,
 } from 'lucide-react';
 import { Logo } from './Logo';
@@ -44,9 +47,12 @@ interface NavItem {
 // caja → Registrar venta).
 export const NAV: NavItem[] = [
   { name: 'hoja-inventario', label: 'Inventario diario', icon: ClipboardList, need: 'kitchen.use', group: 'hojas' },
+  { name: 'hoja-entradas', label: 'Recibir pedido', icon: PackageCheck, need: 'inventory.view', group: 'hojas' },
+  { name: 'hoja-porcionado', label: 'Porcionado', icon: Scissors, need: 'kitchen.use', group: 'hojas' },
+  { name: 'hoja-bebidas', label: 'Bebidas', icon: CupSoda, need: 'kitchen.use', group: 'hojas' },
   { name: 'hoja-ventas', label: 'Ventas del día', icon: ReceiptText, need: 'reports.view', group: 'hojas' },
   { name: 'hoja-merma', label: 'Merma', icon: Scale, need: 'kitchen.use', group: 'hojas' },
-  { name: 'hoja-masa', label: 'Masa de pizza', icon: Wheat, need: 'kitchen.use', group: 'hojas' },
+  { name: 'hoja-masa', label: 'Masa y recetas', icon: Wheat, need: 'kitchen.use', group: 'hojas' },
   { name: 'hoja-bajas', label: 'Bajas', icon: Trash2, need: 'kitchen.use', group: 'hojas' },
   { name: 'vender', label: 'Registrar venta', icon: ShoppingBag, need: 'sales.create', group: 'principal' },
   { name: 'cocina', label: 'Cocina', icon: ChefHat, need: 'kitchen.report', group: 'principal' },

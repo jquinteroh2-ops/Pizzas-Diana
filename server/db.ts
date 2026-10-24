@@ -19,6 +19,11 @@ const ITEM_COLUMNS = [
 // Apertura y cierre del día (o un conteo suelto). La migración 2 la agrega a bases anteriores.
 const COUNT_KIND_COLUMN = "kind TEXT NOT NULL DEFAULT 'libre' CHECK (kind IN ('apertura','cierre','libre'))";
 
+// Migración 3: porciones de cada artículo (JSON [{label, size_m}]) y el desglose de cada
+// línea de conteo (paquetes + porciones + suelto, JSON) para mostrarlo igual que se contó.
+const PORTIONS_COLUMN = "portions TEXT NOT NULL DEFAULT '[]'";
+const COUNT_DETAIL_COLUMN = 'detail TEXT';
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -51,7 +56,8 @@ CREATE TABLE IF NOT EXISTS items (
   is_demo     INTEGER NOT NULL DEFAULT 0,
   created_at  TEXT NOT NULL,
   updated_at  TEXT NOT NULL,
-  ${ITEM_COLUMNS.join(',\n  ')}
+  ${ITEM_COLUMNS.join(',\n  ')},
+  ${PORTIONS_COLUMN}
 );
 
 CREATE TABLE IF NOT EXISTS products (
@@ -113,7 +119,7 @@ CREATE TABLE IF NOT EXISTS movements (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   item_id     INTEGER NOT NULL REFERENCES items(id),
   created_at  TEXT NOT NULL,
-  type        TEXT NOT NULL CHECK (type IN ('inicial','entrada','ajuste','venta','anulacion','produccion','baja','conteo')),
+  type        TEXT NOT NULL CHECK (type IN ('inicial','entrada','ajuste','venta','anulacion','produccion','baja','conteo','porcionado')),
   delta_m     INTEGER NOT NULL,
   after_m     INTEGER NOT NULL,
   reason      TEXT NOT NULL DEFAULT '',
@@ -237,6 +243,7 @@ CREATE TABLE IF NOT EXISTS count_lines (
   item_name  TEXT NOT NULL,
   expected_m INTEGER NOT NULL,   -- lo que decía el sistema al contar
   counted_m  INTEGER NOT NULL,
+  ${COUNT_DETAIL_COLUMN},
   PRIMARY KEY (count_id, item_id)
 );
 
@@ -253,6 +260,27 @@ CREATE TABLE IF NOT EXISTS prep_tasks (
   is_demo        INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_date ON prep_tasks(local_date);
+
+-- Porcionado: la cocina parte un insumo en porciones (pechuga en porciones de 80 g…).
+-- Las porciones siguen siendo el MISMO artículo; solo se descuenta la merma que se bota.
+CREATE TABLE IF NOT EXISTS portionings (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id      INTEGER NOT NULL REFERENCES items(id),
+  item_name    TEXT NOT NULL,
+  lines        TEXT NOT NULL,              -- JSON [{label, size_m, n}]
+  output_m     INTEGER NOT NULL CHECK (output_m > 0),
+  merma_m      INTEGER NOT NULL DEFAULT 0 CHECK (merma_m >= 0),
+  note         TEXT NOT NULL DEFAULT '',
+  status       TEXT NOT NULL DEFAULT 'activa' CHECK (status IN ('activa','anulada')),
+  user_id      INTEGER NOT NULL REFERENCES users(id),
+  created_at   TEXT NOT NULL,
+  local_date   TEXT NOT NULL,
+  annulled_by  INTEGER REFERENCES users(id),
+  annulled_at  TEXT,
+  annul_reason TEXT,
+  is_demo      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_portionings_date ON portionings(local_date);
 `;
 
 /**
@@ -283,6 +311,19 @@ const MIGRATIONS: ((db: DB) => void)[] = [
   (db) => {
     if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='counts'").get()) {
       db.exec(`ALTER TABLE counts ADD COLUMN ${COUNT_KIND_COLUMN}`);
+    }
+  },
+  // 3. Porciones y porcionado: nuevo tipo de movimiento, porciones por artículo y desglose del conteo.
+  (db) => {
+    const sqlOf = (t: string) => (db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(t) as { sql: string }).sql;
+    db.exec(`ALTER TABLE movements RENAME TO movements_old;`);
+    db.exec(sqlOf('movements_old').replace('movements_old', 'movements').replace("'baja','conteo')", "'baja','conteo','porcionado')"));
+    db.exec(`INSERT INTO movements SELECT * FROM movements_old;
+             DROP TABLE movements_old;
+             CREATE INDEX IF NOT EXISTS idx_mov_item ON movements(item_id, created_at);`);
+    db.exec(`ALTER TABLE items ADD COLUMN ${PORTIONS_COLUMN}`);
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='count_lines'").get()) {
+      db.exec(`ALTER TABLE count_lines ADD COLUMN ${COUNT_DETAIL_COLUMN}`);
     }
   },
 ];

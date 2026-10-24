@@ -1,7 +1,7 @@
 // Pantalla «Cocina». El cocinero ve su día (qué toca preparar y 4 botones grandes);
 // la caja solo avisa faltantes y bajas; el administrador ve el centro de control.
 import { useState } from 'react';
-import { ChefHat, Megaphone, Trash2, ClipboardList, CheckCircle2, Circle, Clock, ArrowRight } from 'lucide-react';
+import { ChefHat, Megaphone, Trash2, ClipboardList, CheckCircle2, Circle, Clock, ArrowRight, Scissors } from 'lucide-react';
 import { useApi, useApp } from '../lib/app';
 import type { KitchenToday } from '../lib/types';
 import { PageHeader, Loading, ErrorBox, Badge, DemoTag, cx } from '../components/ui';
@@ -89,6 +89,7 @@ function KitchenHome() {
 
       <div className={cx('grid gap-3 print:hidden', cook ? 'grid-cols-2 min-[400px]:grid-cols-3' : 'grid-cols-2')}>
         {cook && <ActionTile icon={ChefHat} title="Preparar" text="Cebolla, masa, pechuga…" tone="brand" className="col-span-2 min-[400px]:col-span-1" onClick={() => setFlow({ kind: 'preparar' })} />}
+        {cook && <ActionTile icon={Scissors} title="Porcionar" text="Pechuga, cerdo, papas" tone="brand" onClick={() => setFlow({ kind: 'porcionar' })} />}
         <ActionTile icon={Megaphone} title="Falta algo" text="Avisa lo que se acaba" tone="amber" onClick={() => setFlow({ kind: 'faltante' })} />
         <ActionTile icon={Trash2} title="Dar de baja" text="Dañado, vencido, se cayó" tone="ink" onClick={() => setFlow({ kind: 'baja' })} />
       </div>

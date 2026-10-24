@@ -1,7 +1,7 @@
 import { type DB, nowIso, tx, isDemoMode } from '../db.ts';
 import { bad, conflict, notFound, num, oneOf, optStr, str } from '../errors.ts';
 import { baseOf, compatible, isUnit, stockStatus, toMilli, type BaseUnit, type Unit, type StockStatus } from '../../shared/units.ts';
-import { ITEM_KINDS, LOCATIONS, type ItemKind, type Location } from '../../shared/kitchen.ts';
+import { ITEM_KINDS, LOCATIONS, MOVEMENT_TYPES, entryMilli, parsePortions, type ItemKind, type Location, type MovementType, type Portion } from '../../shared/kitchen.ts';
 import type { User } from './users.ts';
 
 export const CATEGORIES = [
@@ -19,8 +19,7 @@ export const CATEGORIES = [
 ] as const;
 export type Category = (typeof CATEGORIES)[number];
 
-export const MOVEMENT_TYPES = ['inicial', 'entrada', 'ajuste', 'venta', 'anulacion', 'produccion', 'baja', 'conteo'] as const;
-export type MovementType = (typeof MOVEMENT_TYPES)[number];
+export { MOVEMENT_TYPES, type MovementType };
 
 export interface Item {
   id: number;
@@ -35,6 +34,8 @@ export interface Item {
   location: Location;
   pack_size_m: number;
   pack_label: string;
+  /** Porciones en que la cocina lo parte. Siguen siendo este mismo artículo. */
+  portions: Portion[];
   sort_order: number;
   active: boolean;
   is_demo: boolean;
@@ -42,13 +43,22 @@ export interface Item {
   updated_at: string;
 }
 
-interface ItemRow extends Omit<Item, 'status' | 'active' | 'is_demo'> {
+interface ItemRow extends Omit<Item, 'status' | 'active' | 'is_demo' | 'portions'> {
   active: number;
   is_demo: number;
+  portions: string;
+}
+
+export function parseJson<T>(raw: string | null | undefined, fallback: T): T {
+  try {
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 function toItem(r: ItemRow): Item {
-  return { ...r, active: !!r.active, is_demo: !!r.is_demo, status: stockStatus(r.qty_m, r.min_m) };
+  return { ...r, portions: parseJson<Portion[]>(r.portions, []), active: !!r.active, is_demo: !!r.is_demo, status: stockStatus(r.qty_m, r.min_m) };
 }
 
 function unitOf(v: unknown): Unit {
@@ -74,7 +84,9 @@ function kitchenFields(body: Record<string, unknown>, unit: Unit, current?: Item
   }
   const packLabel = body.pack_label === undefined ? (current?.pack_label ?? '') : optStr(body.pack_label, 'nombre del paquete', 30);
   const sortOrder = body.sort_order === undefined ? (current?.sort_order ?? 0) : Math.round(num(body.sort_order, 'orden', { max: 100_000 }));
-  return { location, kind, packSize, packLabel: packSize > 0 ? packLabel || 'paquete' : '', sortOrder };
+  const portions =
+    body.portions === undefined ? (current?.portions ?? []) : parsePortions(body.portions, unit, toMilli, (u) => isUnit(u) && compatible(u, unit), (m) => bad(m));
+  return { location, kind, packSize, packLabel: packSize > 0 ? packLabel || 'paquete' : '', sortOrder, portions: JSON.stringify(portions) };
 }
 
 export function getItem(db: DB, id: number): Item {
@@ -118,10 +130,10 @@ export function createItem(db: DB, user: User, body: Record<string, unknown>, op
   return tx(db, () => {
     const r = db
       .prepare(
-        `INSERT INTO items(name, category, base_unit, unit, qty_m, min_m, kind, location, pack_size_m, pack_label, sort_order, is_demo, created_at, updated_at)
-         VALUES (?,?,?,?,0,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO items(name, category, base_unit, unit, qty_m, min_m, kind, location, pack_size_m, pack_label, portions, sort_order, is_demo, created_at, updated_at)
+         VALUES (?,?,?,?,0,?,?,?,?,?,?,?,?,?,?)`,
       )
-      .run(name, category, baseOf(unit), unit, toMilli(min, unit), k.kind, k.location, k.packSize, k.packLabel, k.sortOrder, demo, at, at);
+      .run(name, category, baseOf(unit), unit, toMilli(min, unit), k.kind, k.location, k.packSize, k.packLabel, k.portions, k.sortOrder, demo, at, at);
     const id = Number(r.lastInsertRowid);
     const qm = toMilli(qty, unit);
     if (qm > 0) applyMovement(db, { itemId: id, delta: qm, type: 'inicial', reason: 'Existencia inicial', userId: user.id, at });
@@ -142,8 +154,8 @@ export function updateItem(db: DB, id: number, body: Record<string, unknown>): I
   const dup = db.prepare('SELECT 1 FROM items WHERE name = ? COLLATE NOCASE AND active = 1 AND id <> ?').get(name, id);
   if (dup) throw conflict(`Ya existe un artículo activo llamado "${name}".`);
   db.prepare(
-    'UPDATE items SET name=?, category=?, unit=?, min_m=?, kind=?, location=?, pack_size_m=?, pack_label=?, sort_order=?, updated_at=? WHERE id=?',
-  ).run(name, category, unit, min, k.kind, k.location, k.packSize, k.packLabel, k.sortOrder, nowIso(), id);
+    'UPDATE items SET name=?, category=?, unit=?, min_m=?, kind=?, location=?, pack_size_m=?, pack_label=?, portions=?, sort_order=?, updated_at=? WHERE id=?',
+  ).run(name, category, unit, min, k.kind, k.location, k.packSize, k.packLabel, k.portions, k.sortOrder, nowIso(), id);
   return getItem(db, id);
 }
 
@@ -170,20 +182,60 @@ export function setItemActive(db: DB, id: number, active: boolean): Item {
   return getItem(db, id);
 }
 
+const smallUnit = (b: BaseUnit): Unit => (b === 'g' ? 'g' : b === 'ml' ? 'ml' : 'unidad');
+
+/**
+ * Cuánto entra según lo que se escribió: paquetes (× lo que trae cada uno) + suelto.
+ * { packs?, qty?, unit? }. Así se cuenta lo que llegó tal como viene: «3 paquetes».
+ */
+function entryQty(item: Item, body: Record<string, unknown>): number {
+  const has = (v: unknown) => v !== undefined && v !== null && v !== '';
+  const packs = has(body.packs) ? num(body.packs, `paquetes de ${item.name}`, { max: 100_000 }) : 0;
+  if (packs > 0 && item.pack_size_m <= 0) throw bad(`"${item.name}" no tiene configurado cómo viene (tamaño del paquete).`);
+  const unit = body.unit === undefined ? item.unit : unitOf(body.unit);
+  if (!compatible(unit, item.unit)) throw bad(`La unidad no es compatible con "${item.name}".`);
+  const loose = has(body.qty) ? toMilli(num(body.qty, `cantidad de ${item.name}`), unit) : 0;
+  const total = entryMilli(item, packs, loose);
+  if (total <= 0) throw bad(`Escribe cuánto llegó de "${item.name}".`);
+  return total;
+}
+
 /** Entrada de mercancía (compra, donación, producción...). */
 export function registerEntry(db: DB, user: User, id: number, body: Record<string, unknown>, opts: { at?: string } = {}): Item {
   const item = getItem(db, id);
   if (!item.active) throw conflict('El artículo está desactivado.');
-  const unit = body.unit === undefined ? item.unit : unitOf(body.unit);
-  if (!compatible(unit, item.unit)) throw bad('La unidad no es compatible con la del artículo.');
-  const qty = num(body.qty, 'cantidad', { allowZero: false });
+  const delta = entryQty(item, body);
   const reason = str(body.reason ?? 'Entrada de mercancía', 'motivo', { max: 200 });
   return tx(db, () => {
     const at = opts.at ?? nowIso();
-    applyMovement(db, { itemId: id, delta: toMilli(qty, unit), type: 'entrada', reason, userId: user.id, at });
+    applyMovement(db, { itemId: id, delta, type: 'entrada', reason, userId: user.id, at });
     // Lo que llegó cierra los faltantes reportados de ese artículo.
     db.prepare("UPDATE shortages SET status='recibido', closed_by=?, updated_at=? WHERE item_id=? AND status IN ('abierto','pedido')").run(user.id, at, id);
     return getItem(db, id);
+  });
+}
+
+/**
+ * Recibir un pedido: varias entradas a la vez, todo o nada.
+ * { lines: [{ item_id, packs?, qty?, unit? }], reason? }. Cierra los faltantes de lo que llegó.
+ */
+export function registerEntries(db: DB, user: User, body: Record<string, unknown>, opts: { at?: string } = {}) {
+  const raw = body.lines;
+  if (!Array.isArray(raw) || raw.length === 0) throw bad('Escribe lo que llegó de al menos un producto.');
+  if (raw.length > 300) throw bad('Son demasiados productos en una sola recepción.');
+  const reason = str(body.reason ?? 'Recepción de pedido', 'motivo', { max: 200 });
+  const seen = new Set<number>();
+  const lines = (raw as Record<string, unknown>[]).map((l) => {
+    const item = getItem(db, Number(l?.item_id));
+    if (!item.active) throw conflict(`"${item.name}" está desactivado.`);
+    if (seen.has(item.id)) throw bad(`"${item.name}" está repetido en la recepción.`);
+    seen.add(item.id);
+    return { item, delta: entryQty(item, l) };
+  });
+  const at = opts.at ?? nowIso();
+  return tx(db, () => {
+    const items = lines.map((l) => registerEntry(db, user, l.item.id, { qty: l.delta / 1000, unit: smallUnit(l.item.base_unit), reason }, { at }));
+    return { count: items.length, items };
   });
 }
 

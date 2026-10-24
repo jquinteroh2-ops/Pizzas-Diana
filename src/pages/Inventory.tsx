@@ -12,6 +12,7 @@ import {
   ArrowUpCircle,
   MoreHorizontal,
   Loader2,
+  Trash2,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { navigate, useApi, useApp, useHashRoute } from '../lib/app';
@@ -34,7 +35,7 @@ import {
 } from '../components/ui';
 import { UNIT_LABELS, UNIT_SHORT, formatQty, fromMilli, toMilli, unitsFor, type Unit, type StockStatus } from '../../shared/units.ts';
 import { formatDateTime } from '../../shared/dates.ts';
-import { ITEM_KINDS, KIND_LABELS, LOCATIONS, formatPacks, type ItemKind, type Location } from '../../shared/kitchen.ts';
+import { ITEM_KINDS, KIND_LABELS, LOCATIONS, MAX_PORTIONS, formatPacks, openPack, presentationText, type ItemKind, type Location } from '../../shared/kitchen.ts';
 
 const PAGE = 12;
 
@@ -49,7 +50,28 @@ const MOV_LABEL: Record<MovementType, { label: string; tone: 'green' | 'red' | '
   produccion: { label: 'Preparación', tone: 'neutral' },
   baja: { label: 'Baja', tone: 'red' },
   conteo: { label: 'Conteo', tone: 'amber' },
+  porcionado: { label: 'Merma al porcionar', tone: 'red' },
 };
+
+/** «3 bloques + 1 abierto (van 380 g)»: el queso no se porciona, se ve lo consumido del abierto. */
+function PackLine({ item }: { item: Item }) {
+  const o = openPack(item.qty_m, item.pack_size_m);
+  if (!o) return null;
+  const small: Unit = item.base_unit === 'g' ? 'g' : item.base_unit === 'ml' ? 'ml' : 'unidad';
+  const label = item.pack_label || 'paquete';
+  return (
+    <span className="block text-xs text-ink-500">
+      {o.closed} {label}
+      {o.closed === 1 ? '' : 's'} cerrado{o.closed === 1 ? '' : 's'}
+      {o.openM > 0 && (
+        <>
+          {' '}
+          + 1 abierto (quedan {formatQty(o.openM, small)} · van {formatQty(o.consumedM, small)})
+        </>
+      )}
+    </span>
+  );
+}
 
 function StockBar({ item }: { item: Item }) {
   // Barra relativa a 3 veces el mínimo: muestra de un vistazo qué tan lejos está de la alerta.
@@ -263,6 +285,7 @@ export default function Inventory() {
                           <button className="text-left font-semibold text-ink-900 hover:text-brand-700" onClick={() => navigate('inventario', { item: i.id })}>
                             {i.name}
                           </button>
+                          {presentationText(i) && <span className="ml-1.5 text-xs font-medium text-ink-500">· {presentationText(i)}</span>}
                           <div className="mt-0.5 flex gap-1">
                             {i.kind === 'preparacion' && <Badge tone="amber">Preparación</Badge>}
                             {i.is_demo && <DemoTag />}
@@ -275,7 +298,7 @@ export default function Inventory() {
                         </td>
                         <td className="td-cell">
                           <span className="font-semibold tabular-nums">{formatQty(i.qty_m, i.unit)}</span>
-                          {i.pack_size_m > 0 && <span className="block text-xs text-ink-500">{formatPacks(i.qty_m, i.pack_size_m, i.pack_label, i.unit)}</span>}
+                          <PackLine item={i} />
                           <StockBar item={i} />
                         </td>
                         <td className="td-cell text-ink-500 tabular-nums">{formatQty(i.min_m, i.unit)}</td>
@@ -295,6 +318,7 @@ export default function Inventory() {
                       <p className="flex items-center gap-1.5 truncate font-semibold text-ink-900">
                         {i.name} {i.is_demo && <DemoTag />}
                       </p>
+                      {presentationText(i) && <p className="text-xs text-ink-500">{presentationText(i)}</p>}
                       <p className="text-xs text-ink-500">
                         {i.location} · {i.kind === 'preparacion' ? 'preparación' : i.category}
                       </p>
@@ -398,6 +422,9 @@ function ItemForm({ item, onClose }: { item?: Item; onClose: () => void }) {
   const packUnitOf = (u: Unit): Unit => (u === 'kg' ? 'g' : u === 'l' ? 'ml' : u);
   const [packSize, setPackSize] = useState(item && item.pack_size_m > 0 ? String(fromMilli(item.pack_size_m, packUnitOf(item.unit))) : '');
   const [packLabel, setPackLabel] = useState(item?.pack_label || 'paquete');
+  const [portions, setPortions] = useState<{ label: string; size: string }[]>(
+    () => item?.portions.map((p) => ({ label: p.label, size: String(fromMilli(p.size_m, packUnitOf(item.unit))) })) ?? [],
+  );
   const [busy, setBusy] = useState(false);
 
   // Al editar solo se puede cambiar a una unidad compatible (kg ↔ g, l ↔ ml).
@@ -413,6 +440,7 @@ function ItemForm({ item, onClose }: { item?: Item; onClose: () => void }) {
       pack_size: packSize ? Number(numInput(packSize)) : null,
       pack_unit: packUnit,
       pack_label: packLabel,
+      portions: portions.filter((p) => p.label.trim() || p.size).map((p) => ({ label: p.label, size: Number(numInput(p.size)), unit: packUnit })),
     };
     try {
       if (item) {
@@ -461,7 +489,7 @@ function ItemForm({ item, onClose }: { item?: Item; onClose: () => void }) {
             ))}
           </select>
         </Field>
-        <Field label="Unidad de medida" hint={item ? 'Solo unidades compatibles.' : 'Los cálculos se hacen en g, ml o unidades.'}>
+        <Field label="¿Cómo se controla?" hint={item ? 'Solo unidades compatibles.' : 'Por unidad (butifarras, chorizos, panes, bebidas) o por peso (quesos, carnes, papas).'}>
           <select className="input" value={unit} onChange={(e) => setUnit(e.target.value as Unit)}>
             {unitOptions.map((u) => (
               <option key={u} value={u}>
@@ -495,7 +523,7 @@ function ItemForm({ item, onClose }: { item?: Item; onClose: () => void }) {
           </select>
         </Field>
         <div className="sm:col-span-2">
-          <span className="label">Presentación para contar (opcional)</span>
+          <span className="label">¿Cómo viene? (opcional)</span>
           <div className="grid grid-cols-[auto_1fr_auto_1fr] items-center gap-2 text-sm">
             <span className="text-ink-500">1</span>
             <input className="input" value={packLabel} onChange={(e) => setPackLabel(e.target.value)} maxLength={30} placeholder="paquete" aria-label="Nombre de la presentación" />
@@ -506,11 +534,50 @@ function ItemForm({ item, onClose }: { item?: Item; onClose: () => void }) {
             </div>
           </div>
           <p className="mt-1 text-xs text-ink-500">
-            Si viene en paquetes, la cocina cuenta «3 paquetes + 385 g» y el sistema hace la cuenta.
+            Se muestra al lado del nombre. Al recibir el pedido y al contar se escribe «3 paquetes + 385 g» y el sistema hace la cuenta.
             {packSize && Number(numInput(packSize)) > 0 && item && (
               <> Hoy hay {formatPacks(item.qty_m, toMilli(Number(numInput(packSize)), packUnit), packLabel, unit)}.</>
             )}
           </p>
+        </div>
+        <div className="sm:col-span-2">
+          <span className="label">Porciones (opcional)</span>
+          <p className="mb-2 text-xs text-ink-500">
+            Si la cocina lo parte en porciones (pechuga para picada, papas en bolsas), escríbelas aquí. Siguen siendo este mismo artículo: no se cuenta dos veces.
+          </p>
+          <div className="space-y-2">
+            {portions.map((p, idx) => (
+              <div key={idx} className="grid grid-cols-[1fr_auto_auto] items-center gap-2">
+                <input
+                  className="input"
+                  value={p.label}
+                  maxLength={30}
+                  placeholder="Ej. porción picada"
+                  aria-label="Nombre de la porción"
+                  onChange={(e) => setPortions((l) => l.map((x, k) => (k === idx ? { ...x, label: e.target.value } : x)))}
+                />
+                <div className="flex items-center gap-2">
+                  <input
+                    className="input w-24 tabular-nums"
+                    inputMode="decimal"
+                    value={p.size}
+                    placeholder="80"
+                    aria-label="Tamaño de la porción"
+                    onChange={(e) => setPortions((l) => l.map((x, k) => (k === idx ? { ...x, size: e.target.value } : x)))}
+                  />
+                  <span className="font-semibold text-ink-500">{UNIT_SHORT[packUnit]}</span>
+                </div>
+                <button type="button" className="btn-ghost btn-sm px-2" aria-label="Quitar porción" onClick={() => setPortions((l) => l.filter((_, k) => k !== idx))}>
+                  <Trash2 className="size-4" />
+                </button>
+              </div>
+            ))}
+            {portions.length < MAX_PORTIONS && (
+              <button type="button" className="btn-secondary btn-sm" onClick={() => setPortions((l) => [...l, { label: '', size: '' }])}>
+                <Plus className="size-4" /> Agregar porción
+              </button>
+            )}
+          </div>
         </div>
       </form>
     </Modal>
@@ -520,16 +587,20 @@ function ItemForm({ item, onClose }: { item?: Item; onClose: () => void }) {
 export function EntryForm({ item, onClose }: { item: Item; onClose: () => void }) {
   const { bump } = useApp();
   const toast = useToast();
+  const [packs, setPacks] = useState('');
   const [qty, setQty] = useState('');
-  const [unit, setUnit] = useState<Unit>(item.unit);
+  const [unit, setUnit] = useState<Unit>(item.pack_size_m > 0 ? (item.base_unit === 'g' ? 'g' : item.base_unit === 'ml' ? 'ml' : 'unidad') : item.unit);
   const [reason, setReason] = useState('Compra a proveedor');
   const [busy, setBusy] = useState(false);
+  const packsN = Number(numInput(packs || '0')) || 0;
+  const qtyN = Number(numInput(qty || '0')) || 0;
+  const totalM = Math.round(packsN * item.pack_size_m) + toMilli(qtyN, unit);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
     try {
-      const updated = await api.post<Item>(`/items/${item.id}/entry`, { qty: Number(numInput(qty)), unit, reason });
+      const updated = await api.post<Item>(`/items/${item.id}/entry`, { packs: packsN || undefined, qty: qtyN || undefined, unit, reason });
       toast.success('Entrada registrada', `${item.name}: ahora hay ${formatQty(updated.qty_m, updated.unit)}`);
       bump();
       onClose();
@@ -563,9 +634,14 @@ export function EntryForm({ item, onClose }: { item: Item; onClose: () => void }
       }
     >
       <form id="entry-form" onSubmit={submit} className="space-y-4">
+        {item.pack_size_m > 0 && (
+          <Field label={`¿Cuántos ${item.pack_label || 'paquete'}s llegaron?`} hint={`Cada ${item.pack_label || 'paquete'} trae ${presentationText(item).split('× ')[1]}.`}>
+            <input className="input" inputMode="decimal" value={packs} onChange={(e) => setPacks(e.target.value)} pattern="[0-9]*([.,][0-9]+)?" placeholder="0" autoFocus />
+          </Field>
+        )}
         <div className="grid grid-cols-[1fr_auto] gap-3">
-          <Field label="Cantidad que entra">
-            <input className="input" inputMode="decimal" value={qty} onChange={(e) => setQty(e.target.value)} required pattern="[0-9]*([.,][0-9]+)?" placeholder="0" />
+          <Field label={item.pack_size_m > 0 ? 'Sueltos (opcional)' : 'Cantidad que entra'}>
+            <input className="input" inputMode="decimal" value={qty} onChange={(e) => setQty(e.target.value)} required={item.pack_size_m <= 0} pattern="[0-9]*([.,][0-9]+)?" placeholder="0" />
           </Field>
           <Field label="Unidad">
             <select className="input" value={unit} onChange={(e) => setUnit(e.target.value as Unit)}>
@@ -577,6 +653,11 @@ export function EntryForm({ item, onClose }: { item: Item; onClose: () => void }
             </select>
           </Field>
         </div>
+        {totalM > 0 && (
+          <p className="rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+            Entran <b>{formatQty(totalM, item.unit)}</b>
+          </p>
+        )}
         <Field label="Motivo o referencia">
           <input className="input" value={reason} onChange={(e) => setReason(e.target.value)} required maxLength={200} />
         </Field>
