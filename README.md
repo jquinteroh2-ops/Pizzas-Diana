@@ -7,7 +7,7 @@ Aplicación web integral para la pizzería **Pizza Diana**, diseñada para el co
 ## 🚀 Inicio Rápido
 
 ### Requisitos previos
-- **Node.js** >= 22.13 (incluye soporte nativo para `node:sqlite`).
+- **Node.js** >= 22.18 (ejecuta TypeScript directamente). No hace falta instalar ninguna base de datos: en el computador se usa PGlite.
 - **NPM** instalado.
 
 ### Instalación de dependencias
@@ -59,7 +59,7 @@ npm run lint
   - Vite 8
 - **Backend**:
   - Node.js 24 + Express 5
-  - Base de datos SQLite nativa (`node:sqlite`) con modo WAL, llaves foráneas y transacciones atómicas
+  - PostgreSQL: **Neon** en producción (variable `DATABASE_URL`) y **PGlite** (PostgreSQL dentro de Node, en `data/pglite`) en el computador y en las pruebas. Llaves foráneas y transacciones atómicas, una a la vez para que dos ventas simultáneas no descuadren el inventario
   - Seguridad con hashing criptográfico `scrypt` y cookies de sesión seguras `HttpOnly`
   - Manejo de zona horaria de Colombia (`America/Bogota`, UTC-5) y semanas laborales lunes a domingo.
 
@@ -141,7 +141,9 @@ npm run lint
 
 El repositorio trae `render.yaml`. En Render: **New → Blueprint**, elegir este repositorio y confirmar. Render compila (`npm ci --include=dev && npm run build`) y arranca con `npm start`.
 
-- La base de datos es un archivo SQLite guardado en un **disco persistente** (`/var/data`). Render solo ofrece discos en planes pagos (Starter): en el plan gratis el disco se borra con cada reinicio y se perderían los datos.
+- Plan **gratis**. Los datos se guardan en **Neon** (PostgreSQL gratuito), no en el disco de Render, así que no se pierden cuando el servicio se duerme o se reinicia.
+- En Render → servicio → **Environment**, la variable `DATABASE_URL` debe tener la dirección de conexión de Neon (Neon → Connect → «Connection string»). Lleva la contraseña: no se guarda en el repositorio.
+- Las tablas se crean solas al arrancar. En el plan gratis, la primera visita después de un rato sin uso tarda unos segundos en abrir.
 - Al abrir la dirección por primera vez aparece la **Configuración inicial** para crear el administrador.
 
 > Las bases creadas con la versión anterior se migran solas al arrancar (PRAGMA `user_version`): el rol «empleado» pasa a «caja» y no se pierde nada.

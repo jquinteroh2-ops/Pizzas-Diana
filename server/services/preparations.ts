@@ -1,6 +1,6 @@
 // Preparaciones: lo que hace la cocina con los insumos (cebolla → cebolla caramelizada,
 // harina + levadura + sal… → masa). Reemplazan la hoja de merma y la hoja de masa.
-import { type DB, nowIso, tx, isDemoMode } from '../db.ts';
+import { type DB, nowIso, tx, isDemoMode, mapAsync } from '../db.ts';
 import { bad, conflict, notFound, num, oneOf, optStr, str } from '../errors.ts';
 import { baseOf, compatible, isUnit, toMilli, type BaseUnit, type Unit } from '../../shared/units.ts';
 import { PREP_MODES, productionYield, scaleBatch, type PrepMode } from '../../shared/kitchen.ts';
@@ -55,8 +55,8 @@ const PREP_SELECT = `SELECT p.id, p.name, p.mode, p.output_item_id, i.name outpu
   i.qty_m output_available_m, p.std_output_m, p.instructions, p.active, p.is_demo
   FROM preparations p JOIN items i ON i.id = p.output_item_id`;
 
-function inputsOf(db: DB, prepId: number): PrepInput[] {
-  return db
+async function inputsOf(db: DB, prepId: number): Promise<PrepInput[]> {
+  return await db
     .prepare(
       `SELECT pi.item_id, i.name item_name, i.base_unit, i.unit item_unit, pi.unit, pi.qty_m, i.qty_m available_m
        FROM preparation_inputs pi JOIN items i ON i.id = pi.item_id WHERE pi.preparation_id = ? ORDER BY pi.position`,
@@ -64,10 +64,10 @@ function inputsOf(db: DB, prepId: number): PrepInput[] {
     .all(prepId) as unknown as PrepInput[];
 }
 
-function toPrep(db: DB, r: PrepRow): Preparation {
-  const inputs = inputsOf(db, r.id);
+async function toPrep(db: DB, r: PrepRow): Promise<Preparation> {
+  const inputs = await inputsOf(db, r.id);
   const base = inputs[0];
-  const last = db.prepare("SELECT MAX(created_at) at FROM productions WHERE preparation_id = ? AND status = 'activa'").get(r.id) as { at: string | null };
+  const last = await db.prepare("SELECT MAX(created_at) at FROM productions WHERE preparation_id = ? AND status = 'activa'").get(r.id) as { at: string | null };
   return {
     ...r,
     active: !!r.active,
@@ -79,15 +79,15 @@ function toPrep(db: DB, r: PrepRow): Preparation {
   };
 }
 
-export function listPreparations(db: DB): Preparation[] {
-  const rows = db.prepare(`${PREP_SELECT} ORDER BY p.active DESC, p.name COLLATE NOCASE`).all() as unknown as PrepRow[];
-  return rows.map((r) => toPrep(db, r));
+export async function listPreparations(db: DB): Promise<Preparation[]> {
+  const rows = await db.prepare(`${PREP_SELECT} ORDER BY p.active DESC, lower(p.name)`).all() as unknown as PrepRow[];
+  return await mapAsync(rows, async (r) => await toPrep(db, r));
 }
 
-export function getPreparation(db: DB, id: number): Preparation {
-  const r = db.prepare(`${PREP_SELECT} WHERE p.id = ?`).get(id) as PrepRow | undefined;
+export async function getPreparation(db: DB, id: number): Promise<Preparation> {
+  const r = await db.prepare(`${PREP_SELECT} WHERE p.id = ?`).get(id) as PrepRow | undefined;
   if (!r) throw notFound('Preparación no encontrada.');
-  return toPrep(db, r);
+  return await toPrep(db, r);
 }
 
 interface ItemRef {
@@ -98,8 +98,8 @@ interface ItemRef {
   active: number;
 }
 
-function itemRef(db: DB, id: unknown): ItemRef {
-  const r = db.prepare('SELECT id, name, unit, base_unit, active FROM items WHERE id = ?').get(Number(id)) as ItemRef | undefined;
+async function itemRef(db: DB, id: unknown): Promise<ItemRef> {
+  const r = await db.prepare('SELECT id, name, unit, base_unit, active FROM items WHERE id = ?').get(Number(id)) as ItemRef | undefined;
   if (!r) throw bad('Un artículo de la preparación no existe en el inventario.');
   if (!r.active) throw bad(`"${r.name}" está desactivado en inventario.`);
   return r;
@@ -113,18 +113,18 @@ function qtyIn(item: ItemRef, qty: unknown, unit: unknown, field: string, allowZ
   return { qtyM: toMilli(n, u), unit: u };
 }
 
-function validPrep(db: DB, body: Record<string, unknown>, current?: Preparation) {
+async function validPrep(db: DB, body: Record<string, unknown>, current?: Preparation) {
   const name = body.name === undefined && current ? current.name : str(body.name, 'nombre', { max: 80 });
   const mode = body.mode === undefined && current ? current.mode : oneOf(body.mode, 'tipo de preparación', PREP_MODES);
-  const output = itemRef(db, body.output_item_id ?? current?.output_item_id);
+  const output = await itemRef(db, body.output_item_id ?? current?.output_item_id);
   const instructions = body.instructions === undefined ? (current?.instructions ?? '') : optStr(body.instructions, 'instrucciones', 600);
 
   const rawInputs = body.inputs ?? current?.inputs.map((i) => ({ item_id: i.item_id, qty: i.qty_m / 1000, unit: baseOf(i.unit) }));
   if (!Array.isArray(rawInputs) || rawInputs.length === 0) throw bad('Agrega al menos un ingrediente.');
   if (mode === 'transformacion' && rawInputs.length !== 1) throw bad('Una transformación usa un solo insumo (por ejemplo, cebolla → cebolla caramelizada).');
   const seen = new Set<number>();
-  const inputs = (rawInputs as Record<string, unknown>[]).map((l) => {
-    const it = itemRef(db, l?.item_id);
+  const inputs = await mapAsync(rawInputs as Record<string, unknown>[], async (l) => {
+    const it = await itemRef(db, l?.item_id);
     if (it.id === output.id) throw bad('El resultado no puede ser también ingrediente de la misma preparación.');
     if (seen.has(it.id)) throw bad(`"${it.name}" está repetido. Suma las cantidades en una sola línea.`);
     seen.add(it.id);
@@ -135,7 +135,7 @@ function validPrep(db: DB, body: Record<string, unknown>, current?: Preparation)
   const stdRaw = body.std_output === undefined && current ? null : body.std_output;
   const stdOutputM = stdRaw === null ? current!.std_output_m : qtyIn(output, stdRaw, body.std_output_unit, 'rendimiento estándar').qtyM;
   if (mode === 'transformacion') {
-    const base = itemRef(db, inputs[0].itemId);
+    const base = await itemRef(db, inputs[0].itemId);
     if (base.base_unit !== output.base_unit) {
       throw bad(`Para medir la merma, "${base.name}" y "${output.name}" deben medirse igual (los dos en peso o los dos en volumen).`);
     }
@@ -143,38 +143,38 @@ function validPrep(db: DB, body: Record<string, unknown>, current?: Preparation)
   return { name, mode, output, instructions, inputs, stdOutputM };
 }
 
-function saveInputs(db: DB, prepId: number, inputs: { itemId: number; qtyM: number; unit: Unit }[]) {
-  db.prepare('DELETE FROM preparation_inputs WHERE preparation_id = ?').run(prepId);
+async function saveInputs(db: DB, prepId: number, inputs: { itemId: number; qtyM: number; unit: Unit }[]) {
+  await db.prepare('DELETE FROM preparation_inputs WHERE preparation_id = ?').run(prepId);
   const ins = db.prepare('INSERT INTO preparation_inputs(preparation_id, item_id, qty_m, unit, position) VALUES (?,?,?,?,?)');
-  inputs.forEach((l, idx) => ins.run(prepId, l.itemId, l.qtyM, l.unit, idx));
+  for (const [idx, l] of inputs.entries()) await ins.run(prepId, l.itemId, l.qtyM, l.unit, idx);
 }
 
-export function createPreparation(db: DB, body: Record<string, unknown>): Preparation {
-  const v = validPrep(db, body);
-  if (db.prepare('SELECT 1 FROM preparations WHERE name = ? COLLATE NOCASE AND active = 1').get(v.name)) {
+export async function createPreparation(db: DB, body: Record<string, unknown>): Promise<Preparation> {
+  const v = await validPrep(db, body);
+  if (await db.prepare('SELECT 1 FROM preparations WHERE lower(name) = lower(?) AND active = 1').get(v.name)) {
     throw conflict(`Ya existe una preparación activa llamada "${v.name}".`);
   }
-  return tx(db, () => {
+  return await tx(db, async () => {
     const now = nowIso();
-    const r = db
+    const r = await db
       .prepare('INSERT INTO preparations(name, output_item_id, mode, std_output_m, instructions, is_demo, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)')
-      .run(v.name, v.output.id, v.mode, v.stdOutputM, v.instructions, isDemoMode(db) ? 1 : 0, now, now);
+      .run(v.name, v.output.id, v.mode, v.stdOutputM, v.instructions, await isDemoMode(db) ? 1 : 0, now, now);
     const id = Number(r.lastInsertRowid);
-    saveInputs(db, id, v.inputs);
+    await saveInputs(db, id, v.inputs);
     // Lo que sale de una preparación lo hace la cocina.
-    db.prepare("UPDATE items SET kind = 'preparacion' WHERE id = ?").run(v.output.id);
-    return getPreparation(db, id);
+    await db.prepare("UPDATE items SET kind = 'preparacion' WHERE id = ?").run(v.output.id);
+    return await getPreparation(db, id);
   });
 }
 
-export function updatePreparation(db: DB, id: number, body: Record<string, unknown>): Preparation {
-  const current = getPreparation(db, id);
-  const v = validPrep(db, body, current);
-  if (db.prepare('SELECT 1 FROM preparations WHERE name = ? COLLATE NOCASE AND active = 1 AND id <> ?').get(v.name, id)) {
+export async function updatePreparation(db: DB, id: number, body: Record<string, unknown>): Promise<Preparation> {
+  const current = await getPreparation(db, id);
+  const v = await validPrep(db, body, current);
+  if (await db.prepare('SELECT 1 FROM preparations WHERE lower(name) = lower(?) AND active = 1 AND id <> ?').get(v.name, id)) {
     throw conflict(`Ya existe una preparación activa llamada "${v.name}".`);
   }
-  return tx(db, () => {
-    db.prepare('UPDATE preparations SET name=?, output_item_id=?, mode=?, std_output_m=?, instructions=?, updated_at=? WHERE id=?').run(
+  return await tx(db, async () => {
+    await db.prepare('UPDATE preparations SET name=?, output_item_id=?, mode=?, std_output_m=?, instructions=?, updated_at=? WHERE id=?').run(
       v.name,
       v.output.id,
       v.mode,
@@ -183,16 +183,16 @@ export function updatePreparation(db: DB, id: number, body: Record<string, unkno
       nowIso(),
       id,
     );
-    saveInputs(db, id, v.inputs);
-    db.prepare("UPDATE items SET kind = 'preparacion' WHERE id = ?").run(v.output.id);
-    return getPreparation(db, id);
+    await saveInputs(db, id, v.inputs);
+    await db.prepare("UPDATE items SET kind = 'preparacion' WHERE id = ?").run(v.output.id);
+    return await getPreparation(db, id);
   });
 }
 
-export function setPreparationActive(db: DB, id: number, active: boolean): Preparation {
-  getPreparation(db, id);
-  db.prepare('UPDATE preparations SET active=?, updated_at=? WHERE id=?').run(active ? 1 : 0, nowIso(), id);
-  return getPreparation(db, id);
+export async function setPreparationActive(db: DB, id: number, active: boolean): Promise<Preparation> {
+  await getPreparation(db, id);
+  await db.prepare('UPDATE preparations SET active=?, updated_at=? WHERE id=?').run(active ? 1 : 0, nowIso(), id);
+  return await getPreparation(db, id);
 }
 
 // ---------- Producciones (lo que la cocina prepara cada día) ----------
@@ -228,11 +228,11 @@ type ProductionRow = Omit<ProductionView, 'inputs' | 'yield_pct' | 'efficiency_p
 const PRODUCTION_SELECT = `SELECT pr.*, p.mode, i.name output_name, i.unit output_unit, i.base_unit output_base, u.name user_name
   FROM productions pr JOIN preparations p ON p.id = pr.preparation_id JOIN items i ON i.id = pr.output_item_id JOIN users u ON u.id = pr.user_id`;
 
-function toProduction(db: DB, r: ProductionRow): ProductionView {
-  const inputs = db
+async function toProduction(db: DB, r: ProductionRow): Promise<ProductionView> {
+  const inputs = await db
     .prepare(
       `SELECT x.item_id, x.item_name, i.unit, i.base_unit, x.qty_m FROM production_inputs x JOIN items i ON i.id = x.item_id
-       WHERE x.production_id = ? ORDER BY x.rowid`,
+       WHERE x.production_id = ? ORDER BY x.position`,
     )
     .all(r.id) as ProductionView['inputs'];
   const base = inputs[0];
@@ -246,13 +246,13 @@ function toProduction(db: DB, r: ProductionRow): ProductionView {
   return { ...rest, inputs, yield_pct: y.yieldPct, efficiency_pct: y.efficiencyPct, low: y.low };
 }
 
-export function getProduction(db: DB, id: number): ProductionView {
-  const r = db.prepare(`${PRODUCTION_SELECT} WHERE pr.id = ?`).get(id) as ProductionRow | undefined;
+export async function getProduction(db: DB, id: number): Promise<ProductionView> {
+  const r = await db.prepare(`${PRODUCTION_SELECT} WHERE pr.id = ?`).get(id) as ProductionRow | undefined;
   if (!r) throw notFound('Registro de preparación no encontrado.');
-  return toProduction(db, r);
+  return await toProduction(db, r);
 }
 
-export function listProductions(db: DB, q: { from?: string; to?: string; userId?: number; preparationId?: number; limit?: number }): ProductionView[] {
+export async function listProductions(db: DB, q: { from?: string; to?: string; userId?: number; preparationId?: number; limit?: number }): Promise<ProductionView[]> {
   const where: string[] = [];
   const params: (string | number)[] = [];
   const filters: [string, string | number | undefined][] = [
@@ -267,10 +267,10 @@ export function listProductions(db: DB, q: { from?: string; to?: string; userId?
     params.push(value);
   }
   params.push(Math.min(Math.max(q.limit ?? 100, 1), 500));
-  const rows = db
+  const rows = await db
     .prepare(`${PRODUCTION_SELECT} ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY pr.created_at DESC, pr.id DESC LIMIT ?`)
     .all(...params) as unknown as ProductionRow[];
-  return rows.map((r) => toProduction(db, r));
+  return await mapAsync(rows, async (r) => await toProduction(db, r));
 }
 
 /**
@@ -280,10 +280,10 @@ export function listProductions(db: DB, q: { from?: string; to?: string; userId?
  * - Lote: { preparation_id, inputs: [{item_id, qty, unit}], output_qty, output_unit }
  *   (el primer ingrediente es la base con la que se calcula lo que debía rendir).
  */
-export function registerProduction(db: DB, user: User, body: Record<string, unknown>, opts: { at?: string; isDemo?: boolean } = {}): ProductionView {
-  const prep = getPreparation(db, Number(body.preparation_id));
+export async function registerProduction(db: DB, user: User, body: Record<string, unknown>, opts: { at?: string; isDemo?: boolean } = {}): Promise<ProductionView> {
+  const prep = await getPreparation(db, Number(body.preparation_id));
   if (!prep.active) throw conflict('Esta preparación está desactivada.');
-  const output = itemRef(db, prep.output_item_id);
+  const output = await itemRef(db, prep.output_item_id);
   const outQ = qtyIn(output, body.output_qty, body.output_unit, `cantidad de ${output.name} que salió`);
   const note = optStr(body.note, 'nota', 300);
 
@@ -291,7 +291,7 @@ export function registerProduction(db: DB, user: User, body: Record<string, unkn
   let mermaUtil = 0;
   let mermaInutil = 0;
   if (prep.mode === 'transformacion') {
-    const baseItem = itemRef(db, prep.inputs[0].item_id);
+    const baseItem = await itemRef(db, prep.inputs[0].item_id);
     const inQ = qtyIn(baseItem, body.input_qty, body.input_unit, `cantidad de ${baseItem.name} que se usó`);
     used = [{ itemId: baseItem.id, name: baseItem.name, qtyM: inQ.qtyM }];
     if (body.merma_util_qty !== undefined && body.merma_util_qty !== '' && body.merma_util_qty !== null) {
@@ -309,7 +309,7 @@ export function registerProduction(db: DB, user: User, body: Record<string, unkn
     const seen = new Set<number>();
     used = [];
     for (const l of raw as Record<string, unknown>[]) {
-      const it = itemRef(db, l?.item_id);
+      const it = await itemRef(db, l?.item_id);
       if (!allowed.has(it.id)) throw bad(`"${it.name}" no hace parte de la receta de ${prep.name}.`);
       if (seen.has(it.id)) throw bad(`"${it.name}" está repetido.`);
       seen.add(it.id);
@@ -324,7 +324,10 @@ export function registerProduction(db: DB, user: User, body: Record<string, unkn
   const expected = scaleBatch(prep.inputs, prep.std_output_m, baseUsed).expectedM;
 
   // Primero se valida que alcance todo, para dar un mensaje claro y no a medias.
-  const short = used.filter((u) => (db.prepare('SELECT qty_m FROM items WHERE id = ?').get(u.itemId) as { qty_m: number }).qty_m < u.qtyM);
+  const short: typeof used = [];
+  for (const u of used) {
+    if (((await db.prepare('SELECT qty_m FROM items WHERE id = ?').get(u.itemId)) as { qty_m: number }).qty_m < u.qtyM) short.push(u);
+  }
   if (short.length) {
     throw conflict(
       `No alcanza ${short.map((s) => s.name).join(', ')} según el inventario. Si sí hay, avisa al administrador para que corrija la existencia.`,
@@ -334,43 +337,44 @@ export function registerProduction(db: DB, user: User, body: Record<string, unkn
 
   const at = opts.at ?? nowIso();
   const day = localDate(new Date(at));
-  const isDemo = opts.isDemo ?? isDemoMode(db);
-  return tx(db, () => {
-    const r = db
+  const isDemo = opts.isDemo ?? await isDemoMode(db);
+  return await tx(db, async () => {
+    const r = await db
       .prepare(
         `INSERT INTO productions(preparation_id, preparation_name, output_item_id, output_m, expected_m, merma_util_m, merma_inutil_m, note, user_id, created_at, local_date, is_demo)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(prep.id, prep.name, output.id, outQ.qtyM, expected, mermaUtil, mermaInutil, note, user.id, at, day, isDemo ? 1 : 0);
     const id = Number(r.lastInsertRowid);
-    const insInput = db.prepare('INSERT INTO production_inputs(production_id, item_id, item_name, qty_m) VALUES (?,?,?,?)');
+    // position 0 = el ingrediente base (con él se calcula el rendimiento).
+    const insInput = db.prepare('INSERT INTO production_inputs(production_id, item_id, item_name, qty_m, position) VALUES (?,?,?,?,?)');
     for (const u of used) {
-      insInput.run(id, u.itemId, u.name, u.qtyM);
-      applyMovement(db, { itemId: u.itemId, delta: -u.qtyM, type: 'produccion', reason: `Se usó para ${prep.name} (#${id})`, userId: user.id, at, isDemo });
+      await insInput.run(id, u.itemId, u.name, u.qtyM, prep.inputs.findIndex((i) => i.item_id === u.itemId));
+      await applyMovement(db, { itemId: u.itemId, delta: -u.qtyM, type: 'produccion', reason: `Se usó para ${prep.name} (#${id})`, userId: user.id, at, isDemo });
     }
-    applyMovement(db, { itemId: output.id, delta: outQ.qtyM, type: 'produccion', reason: `Preparación #${id}`, userId: user.id, at, isDemo });
+    await applyMovement(db, { itemId: output.id, delta: outQ.qtyM, type: 'produccion', reason: `Preparación #${id}`, userId: user.id, at, isDemo });
     // Marca como hecha la tarea del plan de hoy para esta preparación, si había.
-    db.prepare(
+    await db.prepare(
       `UPDATE prep_tasks SET production_id = ? WHERE id = (
          SELECT id FROM prep_tasks WHERE local_date = ? AND preparation_id = ? AND production_id IS NULL ORDER BY id LIMIT 1)`,
     ).run(id, day, prep.id);
-    return getProduction(db, id);
+    return await getProduction(db, id);
   });
 }
 
 /** Deshacer una preparación registrada por error: devuelve los insumos y retira lo que salió. */
-export function annulProduction(db: DB, user: User, id: number, body: Record<string, unknown>): ProductionView {
-  const p = getProduction(db, id);
+export async function annulProduction(db: DB, user: User, id: number, body: Record<string, unknown>): Promise<ProductionView> {
+  const p = await getProduction(db, id);
   if (p.status === 'anulada') throw conflict('Esta preparación ya fue anulada.');
   const reason = str(body.reason, 'motivo', { min: 3, max: 200 });
   const at = nowIso();
-  return tx(db, () => {
-    applyMovement(db, { itemId: p.output_item_id, delta: -p.output_m, type: 'produccion', reason: `Anulación de preparación #${id}: ${reason}`, userId: user.id, at, isDemo: !!p.is_demo });
+  return await tx(db, async () => {
+    await applyMovement(db, { itemId: p.output_item_id, delta: -p.output_m, type: 'produccion', reason: `Anulación de preparación #${id}: ${reason}`, userId: user.id, at, isDemo: !!p.is_demo });
     for (const i of p.inputs) {
-      applyMovement(db, { itemId: i.item_id, delta: i.qty_m, type: 'produccion', reason: `Anulación de preparación #${id}: ${reason}`, userId: user.id, at, isDemo: !!p.is_demo });
+      await applyMovement(db, { itemId: i.item_id, delta: i.qty_m, type: 'produccion', reason: `Anulación de preparación #${id}: ${reason}`, userId: user.id, at, isDemo: !!p.is_demo });
     }
-    db.prepare("UPDATE productions SET status='anulada', annulled_by=?, annulled_at=?, annul_reason=? WHERE id=?").run(user.id, at, reason, id);
-    db.prepare('UPDATE prep_tasks SET production_id = NULL WHERE production_id = ?').run(id);
-    return getProduction(db, id);
+    await db.prepare("UPDATE productions SET status='anulada', annulled_by=?, annulled_at=?, annul_reason=? WHERE id=?").run(user.id, at, reason, id);
+    await db.prepare('UPDATE prep_tasks SET production_id = NULL WHERE production_id = ?').run(id);
+    return await getProduction(db, id);
   });
 }

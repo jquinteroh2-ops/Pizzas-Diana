@@ -2,7 +2,7 @@
 // La cocina cuenta y envía; el administrador revisa las diferencias y las aplica.
 // La diferencia se calcula contra lo que decía el sistema AL MOMENTO DE CONTAR, así
 // las ventas que pasen mientras el administrador revisa no se cuentan dos veces.
-import { type DB, nowIso, tx, isDemoMode } from '../db.ts';
+import { type DB, nowIso, tx, isDemoMode, mapAsync } from '../db.ts';
 import { bad, conflict, notFound, oneOf, optStr, num } from '../errors.ts';
 import { compatible, isUnit, toMilli, type BaseUnit, type Unit } from '../../shared/units.ts';
 import {
@@ -34,12 +34,12 @@ export interface CountSheetLine {
 }
 
 /** La hoja de una ubicación, en el mismo orden en que está organizada la nevera. */
-export function countSheet(db: DB, location: unknown): { location: Location; lines: CountSheetLine[] } {
+export async function countSheet(db: DB, location: unknown): Promise<{ location: Location; lines: CountSheetLine[] }> {
   const loc = oneOf(location, 'ubicación', LOCATIONS);
-  const lines = db
+  const lines = await db
     .prepare(
       `SELECT id item_id, name, unit, base_unit, qty_m, pack_size_m, pack_label, portions, kind FROM items
-       WHERE active = 1 AND location = ? ORDER BY sort_order, name COLLATE NOCASE`,
+       WHERE active = 1 AND location = ? ORDER BY sort_order, lower(name)`,
     )
     .all(loc) as unknown as (Omit<CountSheetLine, 'portions'> & { portions: string })[];
   return { location: loc, lines: lines.map((l) => ({ ...l, portions: parseJson<Portion[]>(l.portions, []) })) };
@@ -81,19 +81,19 @@ const SELECT = `SELECT c.id, c.location, c.kind, c.status, c.note, c.counted_by,
   (SELECT COUNT(*) FROM count_lines l WHERE l.count_id = c.id AND l.counted_m <> l.expected_m) diff_count
   FROM counts c JOIN users cu ON cu.id = c.counted_by LEFT JOIN users ru ON ru.id = c.reviewed_by`;
 
-export function getCount(db: DB, user: User, id: number): CountView {
-  const c = db.prepare(`${SELECT} WHERE c.id = ?`).get(id) as CountView | undefined;
+export async function getCount(db: DB, user: User, id: number): Promise<CountView> {
+  const c = await db.prepare(`${SELECT} WHERE c.id = ?`).get(id) as CountView | undefined;
   if (!c || (!can(user, 'kitchen.manage') && c.counted_by !== user.id)) throw notFound('Conteo no encontrado.');
-  const lines = db
+  const lines = await db
     .prepare(
       `SELECT l.item_id, l.item_name, i.unit, i.base_unit, l.expected_m, l.counted_m, l.counted_m - l.expected_m diff_m, l.detail
-       FROM count_lines l JOIN items i ON i.id = l.item_id WHERE l.count_id = ? ORDER BY i.sort_order, l.item_name COLLATE NOCASE`,
+       FROM count_lines l JOIN items i ON i.id = l.item_id WHERE l.count_id = ? ORDER BY i.sort_order, lower(l.item_name)`,
     )
     .all(id) as unknown as (Omit<CountLineView, 'detail'> & { detail: string | null })[];
   return { ...c, lines: lines.map((l) => ({ ...l, detail: parseJson<CountDetail | null>(l.detail, null) })) };
 }
 
-export function listCounts(db: DB, user: User, q: { status?: string; limit?: number }): CountView[] {
+export async function listCounts(db: DB, user: User, q: { status?: string; limit?: number }): Promise<CountView[]> {
   const where: string[] = [];
   const params: (string | number)[] = [];
   if (!can(user, 'kitchen.manage')) {
@@ -105,7 +105,7 @@ export function listCounts(db: DB, user: User, q: { status?: string; limit?: num
     params.push(oneOf(q.status, 'estado', COUNT_STATUSES));
   }
   params.push(Math.min(Math.max(q.limit ?? 50, 1), 200));
-  return db
+  return await db
     .prepare(`${SELECT} ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY c.status = 'pendiente' DESC, c.counted_at DESC LIMIT ?`)
     .all(...params) as unknown as CountView[];
 }
@@ -115,8 +115,8 @@ export function listCounts(db: DB, user: User, q: { status?: string; limit?: num
  * Cada producto se cuenta UNA vez aunque esté en paquetes, porciones y suelto.
  * Los productos que no se escriban no se cuentan. Si lo envía el administrador se aplica de una vez.
  */
-export function submitCount(db: DB, user: User, body: Record<string, unknown>, opts: { at?: string; isDemo?: boolean } = {}): CountView {
-  const sheet = countSheet(db, body.location);
+export async function submitCount(db: DB, user: User, body: Record<string, unknown>, opts: { at?: string; isDemo?: boolean } = {}): Promise<CountView> {
+  const sheet = await countSheet(db, body.location);
   const byId = new Map(sheet.lines.map((l) => [l.item_id, l]));
   const raw = body.lines;
   if (!Array.isArray(raw)) throw bad('El conteo no es válido.');
@@ -138,13 +138,13 @@ export function submitCount(db: DB, user: User, body: Record<string, unknown>, o
   const note = optStr(body.note, 'nota', 300);
   const kind = body.kind === undefined ? 'libre' : oneOf(body.kind, 'tipo de conteo', COUNT_KINDS);
   const at = opts.at ?? nowIso();
-  const isDemo = opts.isDemo ?? isDemoMode(db);
+  const isDemo = opts.isDemo ?? await isDemoMode(db);
 
-  return tx(db, () => {
+  return await tx(db, async () => {
     // Corregir la apertura o el cierre desde la hoja reemplaza el que estaba sin revisar:
     // si quedaran los dos pendientes y se aplicaran, la diferencia se ajustaría dos veces.
     if (kind !== 'libre') {
-      db.prepare("UPDATE counts SET status='descartado', reviewed_by=?, reviewed_at=? WHERE location=? AND kind=? AND local_date=? AND status='pendiente'").run(
+      await db.prepare("UPDATE counts SET status='descartado', reviewed_by=?, reviewed_at=? WHERE location=? AND kind=? AND local_date=? AND status='pendiente'").run(
         user.id,
         at,
         sheet.location,
@@ -152,26 +152,26 @@ export function submitCount(db: DB, user: User, body: Record<string, unknown>, o
         localDate(new Date(at)),
       );
     }
-    const r = db
+    const r = await db
       .prepare('INSERT INTO counts(location, kind, note, counted_by, counted_at, local_date, is_demo) VALUES (?,?,?,?,?,?,?)')
       .run(sheet.location, kind, note, user.id, at, localDate(new Date(at)), isDemo ? 1 : 0);
     const id = Number(r.lastInsertRowid);
     const ins = db.prepare('INSERT INTO count_lines(count_id, item_id, item_name, expected_m, counted_m, detail) VALUES (?,?,?,?,?,?)');
-    for (const l of lines) ins.run(id, l.item.item_id, l.item.name, l.item.qty_m, l.countedM, l.detail ? JSON.stringify(l.detail) : null);
-    if (can(user, 'kitchen.manage') && body.apply !== false) applyCount(db, user, id, at);
-    return getCount(db, user, id);
+    for (const l of lines) await ins.run(id, l.item.item_id, l.item.name, l.item.qty_m, l.countedM, l.detail ? JSON.stringify(l.detail) : null);
+    if (can(user, 'kitchen.manage') && body.apply !== false) await applyCount(db, user, id, at);
+    return await getCount(db, user, id);
   });
 }
 
-function applyCount(db: DB, admin: User, id: number, at: string) {
-  const c = getCount(db, admin, id);
+async function applyCount(db: DB, admin: User, id: number, at: string) {
+  const c = await getCount(db, admin, id);
   for (const l of c.lines ?? []) {
     if (l.diff_m === 0) continue;
-    const current = (db.prepare('SELECT qty_m FROM items WHERE id = ?').get(l.item_id) as { qty_m: number }).qty_m;
+    const current = (await db.prepare('SELECT qty_m FROM items WHERE id = ?').get(l.item_id) as { qty_m: number }).qty_m;
     // Si después del conteo se gastó más de lo que había, la existencia queda en cero.
     const delta = Math.max(l.diff_m, -current);
     if (delta === 0) continue;
-    applyMovement(db, {
+    await applyMovement(db, {
       itemId: l.item_id,
       delta,
       type: 'conteo',
@@ -181,19 +181,19 @@ function applyCount(db: DB, admin: User, id: number, at: string) {
       isDemo: !!c.is_demo,
     });
   }
-  db.prepare("UPDATE counts SET status='aplicado', reviewed_by=?, reviewed_at=? WHERE id=?").run(admin.id, at, id);
+  await db.prepare("UPDATE counts SET status='aplicado', reviewed_by=?, reviewed_at=? WHERE id=?").run(admin.id, at, id);
 }
 
 /** El administrador aplica las diferencias de un conteo o lo descarta. */
-export function reviewCount(db: DB, admin: User, id: number, body: Record<string, unknown>, opts: { at?: string } = {}): CountView {
-  const c = getCount(db, admin, id);
+export async function reviewCount(db: DB, admin: User, id: number, body: Record<string, unknown>, opts: { at?: string } = {}): Promise<CountView> {
+  const c = await getCount(db, admin, id);
   if (c.status !== 'pendiente') throw conflict('Este conteo ya fue revisado.');
   const decision = oneOf(body.decision, 'decisión', ['aplicar', 'descartar'] as const);
   const at = opts.at ?? nowIso();
-  return tx(db, () => {
-    if (decision === 'aplicar') applyCount(db, admin, id, at);
-    else db.prepare("UPDATE counts SET status='descartado', reviewed_by=?, reviewed_at=? WHERE id=?").run(admin.id, at, id);
-    return getCount(db, admin, id);
+  return await tx(db, async () => {
+    if (decision === 'aplicar') await applyCount(db, admin, id, at);
+    else await db.prepare("UPDATE counts SET status='descartado', reviewed_by=?, reviewed_at=? WHERE id=?").run(admin.id, at, id);
+    return await getCount(db, admin, id);
   });
 }
 
@@ -205,9 +205,9 @@ interface DayCount {
 }
 
 /** El último conteo (no descartado) de ese tipo, en esa ubicación y ese día. */
-function lastCount(db: DB, location: string, kind: CountKind, date: string): DayCount | null {
+async function lastCount(db: DB, location: string, kind: CountKind, date: string): Promise<DayCount | null> {
   return (
-    (db
+    (await db
       .prepare(
         `SELECT c.id, u.name counted_by_name, c.counted_at, c.status FROM counts c JOIN users u ON u.id = c.counted_by
          WHERE c.location = ? AND c.kind = ? AND c.local_date = ? AND c.status <> 'descartado' ORDER BY c.counted_at DESC LIMIT 1`,
@@ -217,13 +217,16 @@ function lastCount(db: DB, location: string, kind: CountKind, date: string): Day
 }
 
 /** Qué ubicaciones ya se contaron al abrir y al cerrar ese día. */
-export function dayCountStatus(db: DB, date = localDate()) {
-  const used = new Set((db.prepare('SELECT DISTINCT location FROM items WHERE active = 1').all() as { location: string }[]).map((r) => r.location));
-  return LOCATIONS.filter((l) => used.has(l)).map((location) => ({
-    location,
-    apertura: lastCount(db, location, 'apertura', date),
-    cierre: lastCount(db, location, 'cierre', date),
-  }));
+export async function dayCountStatus(db: DB, date = localDate()) {
+  const used = new Set((await db.prepare('SELECT DISTINCT location FROM items WHERE active = 1').all() as { location: string }[]).map((r) => r.location));
+  return await mapAsync(
+    LOCATIONS.filter((l) => used.has(l)),
+    async (location) => ({
+      location,
+      apertura: await lastCount(db, location, 'apertura', date),
+      cierre: await lastCount(db, location, 'cierre', date),
+    }),
+  );
 }
 
 export interface ReconciliationLine {
@@ -252,9 +255,9 @@ export interface ReconciliationLine {
  * descontaron las ventas frente a lo que realmente se gastó. Se mira solo lo que pasó
  * entre la hora del conteo de apertura y la del cierre de su nevera.
  */
-export function reconciliation(db: DB, date: unknown) {
+export async function reconciliation(db: DB, date: unknown) {
   if (typeof date !== 'string' || !isYmd(date)) throw bad('Fecha no válida.');
-  const status = dayCountStatus(db, date);
+  const status = await dayCountStatus(db, date);
   const lines: ReconciliationLine[] = [];
   const sums = db.prepare(
     `SELECT type, SUM(CASE WHEN delta_m > 0 THEN delta_m ELSE 0 END) pos, SUM(CASE WHEN delta_m < 0 THEN -delta_m ELSE 0 END) neg
@@ -263,19 +266,19 @@ export function reconciliation(db: DB, date: unknown) {
   for (const s of status) {
     if (!s.apertura || !s.cierre || s.cierre.counted_at <= s.apertura.counted_at) continue;
     const close = new Map(
-      (db.prepare('SELECT item_id, counted_m FROM count_lines WHERE count_id = ?').all(s.cierre.id) as { item_id: number; counted_m: number }[]).map((l) => [l.item_id, l.counted_m]),
+      (await db.prepare('SELECT item_id, counted_m FROM count_lines WHERE count_id = ?').all(s.cierre.id) as { item_id: number; counted_m: number }[]).map((l) => [l.item_id, l.counted_m]),
     );
-    const open = db
+    const open = await db
       .prepare(
         `SELECT l.item_id, i.name, i.location, i.unit, i.base_unit, l.counted_m FROM count_lines l JOIN items i ON i.id = l.item_id
-         WHERE l.count_id = ? ORDER BY i.sort_order, i.name COLLATE NOCASE`,
+         WHERE l.count_id = ? ORDER BY i.sort_order, lower(i.name)`,
       )
       .all(s.apertura.id) as { item_id: number; name: string; location: Location; unit: Unit; base_unit: BaseUnit; counted_m: number }[];
     for (const o of open) {
       const closeM = close.get(o.item_id);
       if (closeM === undefined) continue;
       const by = new Map(
-        (sums.all(o.item_id, s.apertura.counted_at, s.cierre.counted_at) as { type: string; pos: number; neg: number }[]).map((r) => [r.type, r]),
+        (await sums.all(o.item_id, s.apertura.counted_at, s.cierre.counted_at) as { type: string; pos: number; neg: number }[]).map((r) => [r.type, r]),
       );
       const get = (type: string, k: 'pos' | 'neg') => by.get(type)?.[k] ?? 0;
       const entries = get('entrada', 'pos');
@@ -340,9 +343,9 @@ export interface InventorySheetLine {
 
 const bogotaStart = (ymd: string) => new Date(`${ymd}T00:00:00-05:00`).toISOString();
 
-function countValues(db: DB, countId: number | undefined): Map<number, { m: number; detail: CountDetail | null }> | null {
+async function countValues(db: DB, countId: number | undefined): Promise<Map<number, { m: number; detail: CountDetail | null }> | null> {
   if (!countId) return null;
-  const rows = db.prepare('SELECT item_id, counted_m, detail FROM count_lines WHERE count_id = ?').all(countId) as { item_id: number; counted_m: number; detail: string | null }[];
+  const rows = await db.prepare('SELECT item_id, counted_m, detail FROM count_lines WHERE count_id = ?').all(countId) as { item_id: number; counted_m: number; detail: string | null }[];
   return new Map(rows.map((r) => [r.item_id, { m: r.counted_m, detail: parseJson<CountDetail | null>(r.detail, null) }]));
 }
 
@@ -350,7 +353,7 @@ function countValues(db: DB, countId: number | undefined): Map<number, { m: numb
  * La hoja de inventario diario, igual a la de papel: por nevera, cada producto con
  * Inicio (apertura) | Entrada | Fin (cierre) | Consumo.
  */
-export function inventorySheet(db: DB, user: User, date: unknown) {
+export async function inventorySheet(db: DB, user: User, date: unknown) {
   if (typeof date !== 'string' || !isYmd(date)) throw bad('Fecha no válida.');
   const admin = can(user, 'kitchen.manage');
   const prevDay = addDays(date, -1);
@@ -358,22 +361,22 @@ export function inventorySheet(db: DB, user: User, date: unknown) {
     `SELECT type, SUM(CASE WHEN delta_m > 0 THEN delta_m ELSE 0 END) pos, SUM(CASE WHEN delta_m < 0 THEN -delta_m ELSE 0 END) neg
      FROM movements WHERE item_id = ? AND created_at >= ? AND created_at < ? GROUP BY type`,
   );
-  const sections = dayCountStatus(db, date).map((s) => {
-    const open = countValues(db, s.apertura?.id);
-    const close = countValues(db, s.cierre?.id);
-    const prevClose = countValues(db, lastCount(db, s.location, 'cierre', prevDay)?.id);
+  const sections = await mapAsync(await dayCountStatus(db, date), async (s) => {
+    const open = await countValues(db, s.apertura?.id);
+    const close = await countValues(db, s.cierre?.id);
+    const prevClose = await countValues(db, (await lastCount(db, s.location, 'cierre', prevDay))?.id);
     // Lo que pasó entre la apertura y el cierre; si falta alguno, el día completo.
     const from = s.apertura?.counted_at ?? bogotaStart(date);
     const to = s.cierre && s.cierre.counted_at > from ? s.cierre.counted_at : bogotaStart(addDays(date, 1));
-    const items = db
+    const items = await db
       .prepare(
         `SELECT id item_id, name, category, unit, base_unit, pack_size_m, pack_label, portions FROM items
-         WHERE active = 1 AND location = ? ORDER BY sort_order, name COLLATE NOCASE`,
+         WHERE active = 1 AND location = ? ORDER BY sort_order, lower(name)`,
       )
       .all(s.location) as unknown as { item_id: number; name: string; category: string; unit: Unit; base_unit: BaseUnit; pack_size_m: number; pack_label: string; portions: string }[];
-    const lines: InventorySheetLine[] = items.map((row) => {
+    const lines: InventorySheetLine[] = await mapAsync(items, async (row) => {
       const i = { ...row, portions: parseJson<Portion[]>(row.portions, []) };
-      const by = new Map((sums.all(i.item_id, from, to) as { type: string; pos: number; neg: number }[]).map((r) => [r.type, r]));
+      const by = new Map((await sums.all(i.item_id, from, to) as { type: string; pos: number; neg: number }[]).map((r) => [r.type, r]));
       const entries = by.get('entrada')?.pos ?? 0;
       const produced = by.get('produccion')?.pos ?? 0;
       const sales = (by.get('venta')?.neg ?? 0) - (by.get('anulacion')?.pos ?? 0);

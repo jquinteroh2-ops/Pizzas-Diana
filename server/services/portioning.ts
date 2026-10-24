@@ -45,13 +45,13 @@ function toView(r: Row): PortioningView {
   return { ...r, lines: parseJson<PortioningLine[]>(r.lines, []), yield_pct: portioningYield(r.output_m, r.merma_m) };
 }
 
-export function getPortioning(db: DB, id: number): PortioningView {
-  const r = db.prepare(`${SELECT} WHERE p.id = ?`).get(id) as Row | undefined;
+export async function getPortioning(db: DB, id: number): Promise<PortioningView> {
+  const r = await db.prepare(`${SELECT} WHERE p.id = ?`).get(id) as Row | undefined;
   if (!r) throw notFound('Porcionado no encontrado.');
   return toView(r);
 }
 
-export function listPortionings(db: DB, q: { from?: string; to?: string; itemId?: number; limit?: number }): PortioningView[] {
+export async function listPortionings(db: DB, q: { from?: string; to?: string; itemId?: number; limit?: number }): Promise<PortioningView[]> {
   const where: string[] = [];
   const params: (string | number)[] = [];
   for (const [sql, v] of [
@@ -64,7 +64,7 @@ export function listPortionings(db: DB, q: { from?: string; to?: string; itemId?
     params.push(v);
   }
   params.push(Math.min(Math.max(q.limit ?? 100, 1), 500));
-  const rows = db
+  const rows = await db
     .prepare(`${SELECT} ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY p.created_at DESC, p.id DESC LIMIT ?`)
     .all(...params) as unknown as Row[];
   return rows.map(toView);
@@ -74,8 +74,8 @@ export function listPortionings(db: DB, q: { from?: string; to?: string; itemId?
  * Registrar un porcionado: { item_id, portions: [cuántas de cada porción del artículo], merma?, note? }.
  * La merma se escribe en la unidad pequeña (g o ml): lo que se botó al limpiar.
  */
-export function registerPortioning(db: DB, user: User, body: Record<string, unknown>, opts: { at?: string; isDemo?: boolean } = {}): PortioningView {
-  const item = getItem(db, Number(body.item_id));
+export async function registerPortioning(db: DB, user: User, body: Record<string, unknown>, opts: { at?: string; isDemo?: boolean } = {}): Promise<PortioningView> {
+  const item = await getItem(db, Number(body.item_id));
   if (!item.active) throw conflict('El artículo está desactivado.');
   if (!item.portions.length) throw bad(`"${item.name}" no tiene porciones configuradas. El administrador las agrega en Inventario → Editar.`);
   const counts = Array.isArray(body.portions) ? body.portions : [];
@@ -96,28 +96,28 @@ export function registerPortioning(db: DB, user: User, body: Record<string, unkn
   }
   const note = optStr(body.note, 'nota', 300);
   const at = opts.at ?? nowIso();
-  const isDemo = opts.isDemo ?? isDemoMode(db);
-  return tx(db, () => {
-    const r = db
+  const isDemo = opts.isDemo ?? await isDemoMode(db);
+  return await tx(db, async () => {
+    const r = await db
       .prepare('INSERT INTO portionings(item_id, item_name, lines, output_m, merma_m, note, user_id, created_at, local_date, is_demo) VALUES (?,?,?,?,?,?,?,?,?,?)')
       .run(item.id, item.name, JSON.stringify(lines), output, merma, note, user.id, at, localDate(new Date(at)), isDemo ? 1 : 0);
     const id = Number(r.lastInsertRowid);
-    if (merma > 0) applyMovement(db, { itemId: item.id, delta: -merma, type: 'porcionado', reason: `Merma al porcionar #${id}`, userId: user.id, at, isDemo });
-    return getPortioning(db, id);
+    if (merma > 0) await applyMovement(db, { itemId: item.id, delta: -merma, type: 'porcionado', reason: `Merma al porcionar #${id}`, userId: user.id, at, isDemo });
+    return await getPortioning(db, id);
   });
 }
 
 /** Deshacer un porcionado registrado por error: devuelve la merma al inventario. */
-export function annulPortioning(db: DB, user: User, id: number, body: Record<string, unknown>): PortioningView {
-  const p = getPortioning(db, id);
+export async function annulPortioning(db: DB, user: User, id: number, body: Record<string, unknown>): Promise<PortioningView> {
+  const p = await getPortioning(db, id);
   if (p.status === 'anulada') throw conflict('Este porcionado ya fue anulado.');
   const reason = str(body.reason, 'motivo', { min: 3, max: 200 });
   const at = nowIso();
-  return tx(db, () => {
+  return await tx(db, async () => {
     if (p.merma_m > 0) {
-      applyMovement(db, { itemId: p.item_id, delta: p.merma_m, type: 'porcionado', reason: `Anulación del porcionado #${id}: ${reason}`, userId: user.id, at, isDemo: !!p.is_demo });
+      await applyMovement(db, { itemId: p.item_id, delta: p.merma_m, type: 'porcionado', reason: `Anulación del porcionado #${id}: ${reason}`, userId: user.id, at, isDemo: !!p.is_demo });
     }
-    db.prepare("UPDATE portionings SET status='anulada', annulled_by=?, annulled_at=?, annul_reason=? WHERE id=?").run(user.id, at, reason, id);
-    return getPortioning(db, id);
+    await db.prepare("UPDATE portionings SET status='anulada', annulled_by=?, annulled_at=?, annul_reason=? WHERE id=?").run(user.id, at, reason, id);
+    return await getPortioning(db, id);
   });
 }

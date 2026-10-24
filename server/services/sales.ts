@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { type DB, nowIso, tx, isDemoMode } from '../db.ts';
+import { type DB, nowIso, tx, isDemoMode, mapAsync } from '../db.ts';
 import { AppError, bad, conflict, forbidden, int, notFound, str } from '../errors.ts';
 import { localDate, isYmd } from '../../shared/dates.ts';
 import type { BaseUnit, Unit } from '../../shared/units.ts';
@@ -45,11 +45,11 @@ function parseItems(raw: unknown): SaleInputItem[] {
 }
 
 /** Calcula el consumo total de cada ingrediente y compara con la existencia actual. */
-function buildPlan(db: DB, items: SaleInputItem[]): Plan {
+async function buildPlan(db: DB, items: SaleInputItem[]): Promise<Plan> {
   const plan: Plan = { items: [], lines: [], requirements: [], totalUnits: 0 };
   const need = new Map<number, number>();
   for (const it of items) {
-    const p = getProduct(db, it.productId);
+    const p = await getProduct(db, it.productId);
     if (!p.active) throw conflict(`"${p.name}" está inactivo y no se puede vender.`);
     if (p.warnings.length) throw conflict(`"${p.name}" no se puede vender: ${p.warnings[0]}`);
     plan.items.push({ productId: p.id, name: p.name, qty: it.qty });
@@ -61,7 +61,7 @@ function buildPlan(db: DB, items: SaleInputItem[]): Plan {
     }
   }
   for (const [itemId, needed] of need) {
-    const i = db.prepare('SELECT id, name, base_unit, unit, qty_m FROM items WHERE id = ?').get(itemId) as {
+    const i = await db.prepare('SELECT id, name, base_unit, unit, qty_m FROM items WHERE id = ?').get(itemId) as {
       id: number;
       name: string;
       base_unit: BaseUnit;
@@ -84,8 +84,8 @@ function buildPlan(db: DB, items: SaleInputItem[]): Plan {
 }
 
 /** Vista previa: qué se va a descontar y si alcanza. No modifica nada. */
-export function previewSale(db: DB, body: Record<string, unknown>) {
-  const plan = buildPlan(db, parseItems(body.items));
+export async function previewSale(db: DB, body: Record<string, unknown>) {
+  const plan = await buildPlan(db, parseItems(body.items));
   const shortages = plan.requirements.filter((r) => r.short_m > 0);
   return { items: plan.items, requirements: plan.requirements, totalUnits: plan.totalUnits, ok: shortages.length === 0, shortages };
 }
@@ -96,18 +96,18 @@ export function previewSale(db: DB, body: Record<string, unknown>) {
  * dos veces (doble clic, reintento de red) se devuelve la venta ya registrada
  * sin volver a descontar.
  */
-export function registerSale(db: DB, user: User, body: Record<string, unknown>, opts: { at?: string; isDemo?: boolean } = {}) {
+export async function registerSale(db: DB, user: User, body: Record<string, unknown>, opts: { at?: string; isDemo?: boolean } = {}) {
   const requestId = str(body.requestId, 'identificador de la operación', { min: 8, max: 80 });
   const items = parseItems(body.items);
 
-  return tx(db, () => {
-    const prev = db.prepare('SELECT id, user_id FROM sales WHERE request_id = ?').get(requestId) as { id: string; user_id: number } | undefined;
+  return await tx(db, async () => {
+    const prev = await db.prepare('SELECT id, user_id FROM sales WHERE request_id = ?').get(requestId) as { id: string; user_id: number } | undefined;
     if (prev) {
       if (prev.user_id !== user.id) throw conflict('Identificador de operación repetido.');
-      return { sale: getSale(db, user, prev.id), duplicate: true };
+      return { sale: await getSale(db, user, prev.id), duplicate: true };
     }
 
-    const plan = buildPlan(db, items);
+    const plan = await buildPlan(db, items);
     const shortages = plan.requirements.filter((r) => r.short_m > 0);
     if (shortages.length) {
       throw new AppError(409, 'No hay existencias suficientes para esta venta.', { shortages });
@@ -115,8 +115,8 @@ export function registerSale(db: DB, user: User, body: Record<string, unknown>, 
 
     const id = randomUUID();
     const at = opts.at ?? nowIso();
-    const demo = (opts.isDemo ?? isDemoMode(db)) ? 1 : 0;
-    db.prepare('INSERT INTO sales(id, request_id, user_id, created_at, local_date, total_units, is_demo) VALUES (?,?,?,?,?,?,?)').run(
+    const demo = (opts.isDemo ?? await isDemoMode(db)) ? 1 : 0;
+    await db.prepare('INSERT INTO sales(id, request_id, user_id, created_at, local_date, total_units, is_demo) VALUES (?,?,?,?,?,?,?)').run(
       id,
       requestId,
       user.id,
@@ -126,17 +126,17 @@ export function registerSale(db: DB, user: User, body: Record<string, unknown>, 
       demo,
     );
     const insItem = db.prepare('INSERT INTO sale_items(sale_id, product_id, product_name, qty) VALUES (?,?,?,?)');
-    for (const it of plan.items) insItem.run(id, it.productId, it.name, it.qty);
+    for (const it of plan.items) await insItem.run(id, it.productId, it.name, it.qty);
     const insLine = db.prepare(
       'INSERT INTO sale_consumption(sale_id, product_id, item_id, item_name, base_unit, per_unit_m, total_m) VALUES (?,?,?,?,?,?,?)',
     );
-    for (const l of plan.lines) insLine.run(id, l.productId, l.itemId, l.itemName, l.baseUnit, l.perUnit, l.total);
+    for (const l of plan.lines) await insLine.run(id, l.productId, l.itemId, l.itemName, l.baseUnit, l.perUnit, l.total);
 
     const ref = id.slice(0, 8).toUpperCase();
     for (const r of plan.requirements) {
-      applyMovement(db, { itemId: r.item_id, delta: -r.needed_m, type: 'venta', reason: `Venta #${ref}`, userId: user.id, saleId: id, at, isDemo: !!demo });
+      await applyMovement(db, { itemId: r.item_id, delta: -r.needed_m, type: 'venta', reason: `Venta #${ref}`, userId: user.id, saleId: id, at, isDemo: !!demo });
     }
-    return { sale: getSale(db, user, id), duplicate: false };
+    return { sale: await getSale(db, user, id), duplicate: false };
   });
 }
 
@@ -144,19 +144,19 @@ export function registerSale(db: DB, user: User, body: Record<string, unknown>, 
  * Anula una venta: devuelve al inventario lo que se descontó (con movimientos
  * compensatorios) y conserva el registro original marcado como anulado.
  */
-export function annulSale(db: DB, user: User, id: string, body: Record<string, unknown>, opts: { at?: string } = {}) {
+export async function annulSale(db: DB, user: User, id: string, body: Record<string, unknown>, opts: { at?: string } = {}) {
   const reason = str(body.reason, 'motivo de la anulación', { min: 3, max: 200 });
-  return tx(db, () => {
-    const s = db.prepare('SELECT * FROM sales WHERE id = ?').get(id) as { status: string; is_demo: number } | undefined;
+  return await tx(db, async () => {
+    const s = await db.prepare('SELECT * FROM sales WHERE id = ?').get(id) as { status: string; is_demo: number } | undefined;
     if (!s) throw notFound('Venta no encontrada.');
     if (s.status === 'anulada') throw conflict('Esta venta ya fue anulada.');
     const at = opts.at ?? nowIso();
-    const totals = db
+    const totals = await db
       .prepare('SELECT item_id, SUM(total_m) total FROM sale_consumption WHERE sale_id = ? GROUP BY item_id')
       .all(id) as { item_id: number; total: number }[];
     const ref = id.slice(0, 8).toUpperCase();
     for (const t of totals) {
-      applyMovement(db, {
+      await applyMovement(db, {
         itemId: t.item_id,
         delta: t.total,
         type: 'anulacion',
@@ -167,8 +167,8 @@ export function annulSale(db: DB, user: User, id: string, body: Record<string, u
         isDemo: !!s.is_demo,
       });
     }
-    db.prepare("UPDATE sales SET status='anulada', annulled_by=?, annulled_at=?, annul_reason=? WHERE id=?").run(user.id, at, reason, id);
-    return getSale(db, user, id);
+    await db.prepare("UPDATE sales SET status='anulada', annulled_by=?, annulled_at=?, annul_reason=? WHERE id=?").run(user.id, at, reason, id);
+    return await getSale(db, user, id);
   });
 }
 
@@ -201,17 +201,17 @@ const SALE_SELECT = `SELECT s.id, s.created_at, s.local_date, s.total_units, s.s
   a.name annulled_by_name, s.annulled_at, s.annul_reason, s.is_demo
   FROM sales s JOIN users u ON u.id = s.user_id LEFT JOIN users a ON a.id = s.annulled_by`;
 
-function attachItems(db: DB, sales: Omit<SaleView, 'items'>[]): SaleView[] {
+async function attachItems(db: DB, sales: Omit<SaleView, 'items'>[]): Promise<SaleView[]> {
   const stmt = db.prepare('SELECT product_id, product_name, qty FROM sale_items WHERE sale_id = ? ORDER BY qty DESC, product_name');
-  return sales.map((s) => ({ ...s, items: stmt.all(s.id) as SaleView['items'] }));
+  return await mapAsync(sales, async (s) => ({ ...s, items: (await stmt.all(s.id)) as SaleView['items'] }));
 }
 
-export function getSale(db: DB, user: User, id: string) {
-  const s = db.prepare(`${SALE_SELECT} WHERE s.id = ?`).get(id) as Omit<SaleView, 'items'> | undefined;
+export async function getSale(db: DB, user: User, id: string) {
+  const s = await db.prepare(`${SALE_SELECT} WHERE s.id = ?`).get(id) as Omit<SaleView, 'items'> | undefined;
   if (!s) throw notFound('Venta no encontrada.');
   if (s.user_id !== user.id && !can(user, 'sales.viewAll')) throw forbidden('Solo puedes ver tus propias ventas.');
-  const [sale] = attachItems(db, [s]);
-  const consumption = db
+  const [sale] = await attachItems(db, [s]);
+  const consumption = await db
     .prepare(
       `SELECT c.product_id, si.product_name, c.item_id, c.item_name, c.base_unit, c.per_unit_m, c.total_m
        FROM sale_consumption c JOIN sale_items si ON si.sale_id = c.sale_id AND si.product_id = c.product_id
@@ -221,11 +221,11 @@ export function getSale(db: DB, user: User, id: string) {
   return { ...sale, consumption };
 }
 
-export function listSales(
+export async function listSales(
   db: DB,
   user: User,
   q: { from?: string; to?: string; productId?: number; userId?: number; status?: string; limit?: number },
-): SaleView[] {
+): Promise<SaleView[]> {
   const where: string[] = [];
   const params: (string | number)[] = [];
   if (q.from) {
@@ -253,8 +253,8 @@ export function listSales(
     params.push(q.status);
   }
   params.push(Math.min(Math.max(q.limit ?? 500, 1), 2000));
-  const rows = db
+  const rows = await db
     .prepare(`${SALE_SELECT} ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY s.created_at DESC LIMIT ?`)
     .all(...params) as unknown as Omit<SaleView, 'items'>[];
-  return attachItems(db, rows);
+  return await attachItems(db, rows);
 }

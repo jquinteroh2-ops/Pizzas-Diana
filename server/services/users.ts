@@ -94,17 +94,17 @@ function validPerms(v: unknown): ExtraPerm[] {
 const SESSION_HOURS = 12;
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
-export function createSession(db: DB, userId: number): string {
+export async function createSession(db: DB, userId: number): Promise<string> {
   const token = randomBytes(32).toString('base64url');
   const expires = new Date(Date.now() + SESSION_HOURS * 3600_000).toISOString();
-  db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(nowIso());
-  db.prepare('INSERT INTO sessions(token_hash, user_id, expires_at) VALUES (?, ?, ?)').run(sha256(token), userId, expires);
+  await db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(nowIso());
+  await db.prepare('INSERT INTO sessions(token_hash, user_id, expires_at) VALUES (?, ?, ?)').run(sha256(token), userId, expires);
   return token;
 }
 
-export function userFromToken(db: DB, token: string | undefined): User | null {
+export async function userFromToken(db: DB, token: string | undefined): Promise<User | null> {
   if (!token) return null;
-  const row = db
+  const row = await db
     .prepare(
       `SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
        WHERE s.token_hash = ? AND s.expires_at > ? AND u.active = 1`,
@@ -113,30 +113,30 @@ export function userFromToken(db: DB, token: string | undefined): User | null {
   return row ? toUser(row) : null;
 }
 
-export function destroySession(db: DB, token: string | undefined): void {
-  if (token) db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(sha256(token));
+export async function destroySession(db: DB, token: string | undefined): Promise<void> {
+  if (token) await db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(sha256(token));
 }
 
 // ---------- Casos de uso ----------
 
-export function loginUsers(db: DB): number {
-  return (db.prepare('SELECT COUNT(*) n FROM users WHERE pass_hash IS NOT NULL').get() as { n: number }).n;
+export async function loginUsers(db: DB): Promise<number> {
+  return (await db.prepare('SELECT COUNT(*) n FROM users WHERE pass_hash IS NOT NULL').get() as { n: number }).n;
 }
 
-export function needsSetup(db: DB): boolean {
-  return loginUsers(db) === 0;
+export async function needsSetup(db: DB): Promise<boolean> {
+  return await loginUsers(db) === 0;
 }
 
 /** Primer arranque: crear el administrador. Solo funciona si aún no existe ningún usuario. */
-export function setupAdmin(db: DB, body: Record<string, unknown>): User {
-  if (!needsSetup(db)) throw forbidden('El sistema ya tiene un administrador configurado.');
-  return insertUser(db, { ...body, role: 'admin' }, false);
+export async function setupAdmin(db: DB, body: Record<string, unknown>): Promise<User> {
+  if (!await needsSetup(db)) throw forbidden('El sistema ya tiene un administrador configurado.');
+  return await insertUser(db, { ...body, role: 'admin' }, false);
 }
 
-export function authenticate(db: DB, username: unknown, password: unknown): User {
+export async function authenticate(db: DB, username: unknown, password: unknown): Promise<User> {
   const fail = new AppError(401, 'Usuario o contraseña incorrectos.');
   if (typeof username !== 'string' || typeof password !== 'string') throw fail;
-  const row = db.prepare('SELECT * FROM users WHERE username = ?').get(username.trim().toLowerCase()) as UserRow | undefined;
+  const row = await db.prepare('SELECT * FROM users WHERE username = ?').get(username.trim().toLowerCase()) as UserRow | undefined;
   // Se verifica igual aunque el usuario no exista, para no revelar cuáles existen por el tiempo de respuesta.
   const ok = verifyPassword(password, row?.pass_hash ?? 'scrypt$00$' + '00'.repeat(64));
   if (!row || !ok) throw fail;
@@ -144,51 +144,51 @@ export function authenticate(db: DB, username: unknown, password: unknown): User
   return toUser(row);
 }
 
-function insertUser(db: DB, body: Record<string, unknown>, isDemo: boolean): User {
+async function insertUser(db: DB, body: Record<string, unknown>, isDemo: boolean): Promise<User> {
   const username = validUsername(body.username);
   const name = str(body.name, 'nombre', { max: 80 });
   const role = oneOf(body.role, 'rol', ROLES);
   const perms = role === 'admin' ? [] : validPerms(body.perms);
   const pass = validPassword(body.password);
-  if (db.prepare('SELECT 1 FROM users WHERE username = ?').get(username)) throw conflict('Ese nombre de usuario ya existe.');
+  if (await db.prepare('SELECT 1 FROM users WHERE username = ?').get(username)) throw conflict('Ese nombre de usuario ya existe.');
   const now = nowIso();
-  const r = db
+  const r = await db
     .prepare('INSERT INTO users(username, name, role, perms, pass_hash, is_demo, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)')
     .run(username, name, role, JSON.stringify(perms), hashPassword(pass), isDemo ? 1 : 0, now, now);
-  return getUser(db, Number(r.lastInsertRowid));
+  return await getUser(db, Number(r.lastInsertRowid));
 }
 
-export function getUser(db: DB, id: number): User {
-  const row = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as UserRow | undefined;
+export async function getUser(db: DB, id: number): Promise<User> {
+  const row = await db.prepare('SELECT * FROM users WHERE id = ?').get(id) as UserRow | undefined;
   if (!row) throw notFound('Usuario no encontrado.');
   return toUser(row);
 }
 
-export function listUsers(db: DB): (User & { can_login: boolean })[] {
-  const rows = db.prepare('SELECT * FROM users ORDER BY active DESC, role, name').all() as unknown as UserRow[];
+export async function listUsers(db: DB): Promise<(User & { can_login: boolean })[]> {
+  const rows = await db.prepare('SELECT * FROM users ORDER BY active DESC, role, name').all() as unknown as UserRow[];
   return rows.map((r) => ({ ...toUser(r), can_login: r.pass_hash !== null }));
 }
 
-export function createUser(db: DB, body: Record<string, unknown>): User {
-  return insertUser(db, body, false);
+export async function createUser(db: DB, body: Record<string, unknown>): Promise<User> {
+  return await insertUser(db, body, false);
 }
 
-function activeAdmins(db: DB): number {
-  return (db.prepare("SELECT COUNT(*) n FROM users WHERE role='admin' AND active=1 AND pass_hash IS NOT NULL").get() as { n: number }).n;
+async function activeAdmins(db: DB): Promise<number> {
+  return (await db.prepare("SELECT COUNT(*) n FROM users WHERE role='admin' AND active=1 AND pass_hash IS NOT NULL").get() as { n: number }).n;
 }
 
-export function updateUser(db: DB, actor: User, id: number, body: Record<string, unknown>): User {
-  const current = getUser(db, id);
+export async function updateUser(db: DB, actor: User, id: number, body: Record<string, unknown>): Promise<User> {
+  const current = await getUser(db, id);
   const name = body.name === undefined ? current.name : str(body.name, 'nombre', { max: 80 });
   const role = body.role === undefined ? current.role : oneOf(body.role, 'rol', ROLES);
   const perms = role === 'admin' ? [] : body.perms === undefined ? current.perms : validPerms(body.perms);
   const active = body.active === undefined ? current.active : body.active === true;
 
   const losesAdmin = current.role === 'admin' && current.active && (role !== 'admin' || !active);
-  if (losesAdmin && activeAdmins(db) <= 1) throw conflict('Debe quedar al menos un administrador activo.');
+  if (losesAdmin && await activeAdmins(db) <= 1) throw conflict('Debe quedar al menos un administrador activo.');
   if (actor.id === id && !active) throw conflict('No puedes desactivar tu propio usuario.');
 
-  db.prepare('UPDATE users SET name=?, role=?, perms=?, active=?, updated_at=? WHERE id=?').run(
+  await db.prepare('UPDATE users SET name=?, role=?, perms=?, active=?, updated_at=? WHERE id=?').run(
     name,
     role,
     JSON.stringify(perms),
@@ -196,27 +196,27 @@ export function updateUser(db: DB, actor: User, id: number, body: Record<string,
     nowIso(),
     id,
   );
-  if (!active) db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
-  return getUser(db, id);
+  if (!active) await db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
+  return await getUser(db, id);
 }
 
-export function resetPassword(db: DB, id: number, password: unknown): void {
-  const user = getUser(db, id);
+export async function resetPassword(db: DB, id: number, password: unknown): Promise<void> {
+  const user = await getUser(db, id);
   if (user.is_demo) throw conflict('Los usuarios DEMO no pueden iniciar sesión.');
-  db.prepare('UPDATE users SET pass_hash=?, updated_at=? WHERE id=?').run(hashPassword(validPassword(password)), nowIso(), id);
-  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
+  await db.prepare('UPDATE users SET pass_hash=?, updated_at=? WHERE id=?').run(hashPassword(validPassword(password)), nowIso(), id);
+  await db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
 }
 
-export function changeOwnPassword(db: DB, user: User, current: unknown, next: unknown): void {
-  const row = db.prepare('SELECT pass_hash FROM users WHERE id = ?').get(user.id) as { pass_hash: string | null };
+export async function changeOwnPassword(db: DB, user: User, current: unknown, next: unknown): Promise<void> {
+  const row = await db.prepare('SELECT pass_hash FROM users WHERE id = ?').get(user.id) as { pass_hash: string | null };
   if (typeof current !== 'string' || !verifyPassword(current, row.pass_hash)) throw bad('La contraseña actual no es correcta.');
-  db.prepare('UPDATE users SET pass_hash=?, updated_at=? WHERE id=?').run(hashPassword(validPassword(next)), nowIso(), user.id);
+  await db.prepare('UPDATE users SET pass_hash=?, updated_at=? WHERE id=?').run(hashPassword(validPassword(next)), nowIso(), user.id);
 }
 
 /** Usuario de relleno para los datos DEMO: no tiene contraseña, así que no puede entrar. */
-export function insertDemoUser(db: DB, username: string, name: string, role: Role): number {
+export async function insertDemoUser(db: DB, username: string, name: string, role: Role): Promise<number> {
   const now = nowIso();
-  const r = db
+  const r = await db
     .prepare("INSERT INTO users(username, name, role, perms, pass_hash, is_demo, created_at, updated_at) VALUES (?,?,?,'[]',NULL,1,?,?)")
     .run(username, name, role, now, now);
   return Number(r.lastInsertRowid);

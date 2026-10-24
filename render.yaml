@@ -1,10 +1,10 @@
 # Despliegue en Render (https://render.com) como «Blueprint».
 # En Render: New → Blueprint → elegir este repositorio. Render lee este archivo y crea el servicio.
 #
-# Plan GRATIS. OJO: la base de datos es un archivo SQLite y en el plan gratis el disco NO es
-# persistente: cuando el servicio se duerme (15 min sin visitas), se reinicia o se vuelve a
-# desplegar, se borran los datos. Para guardar las ventas de verdad hace falta un disco
-# (plan Starter + «disk») o una base de datos externa.
+# Plan GRATIS. Los datos NO se guardan en el disco de Render (en el plan gratis se borra):
+# viven en una base PostgreSQL gratuita de Neon (https://neon.tech). La dirección de esa base
+# va en la variable DATABASE_URL, que se escribe a mano en Render (Environment) porque lleva
+# la contraseña: nunca se guarda en el repositorio.
 services:
   - type: web
     name: pizza-diana
@@ -19,3 +19,5 @@ services:
         value: '24'
       - key: NODE_ENV
         value: production
+      - key: DATABASE_URL
+        sync: false

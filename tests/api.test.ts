@@ -10,7 +10,7 @@ let server: Server;
 let base = '';
 
 before(async () => {
-  const app = createApp(openDb(':memory:'));
+  const app = createApp(await openDb(':memory:'));
   await new Promise<void>((r) => {
     server = app.listen(0, () => r());
   });
