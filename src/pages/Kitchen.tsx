@@ -15,6 +15,7 @@ import KitchenAdmin from './KitchenAdmin';
 
 export default function Kitchen() {
   const { can } = useApp();
+  // La jefa de cocina trabaja en la hoja del día; esta pantalla es para el administrador.
   return can('kitchen.manage') ? <KitchenAdmin /> : <KitchenHome />;
 }
 

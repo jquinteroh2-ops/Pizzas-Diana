@@ -1,9 +1,9 @@
-// Bajas de cocina (reemplaza el «Formato de bajas»). Toda baja debe autorizarla el
-// administrador: solo descuenta del inventario cuando se aprueba.
+// Bajas de cocina (reemplaza el «Formato de bajas»). Se descuentan del inventario al reportarlas
+// (el producto ya salió de la nevera); el administrador las autoriza y, si las rechaza, se devuelven.
 import { type DB, nowIso, tx, isDemoMode } from '../db.ts';
 import { bad, conflict, notFound, num, oneOf, optStr } from '../errors.ts';
-import { compatible, formatQty, isUnit, toMilli, type BaseUnit, type Unit } from '../../shared/units.ts';
-import { WASTE_REASONS, WASTE_STATUSES, type WasteReason, type WasteStatus } from '../../shared/kitchen.ts';
+import { compatible, isUnit, toMilli, type BaseUnit, type Unit } from '../../shared/units.ts';
+import { WASTE_REASONS, WASTE_REASON_LABELS, WASTE_STATUSES, type WasteReason, type WasteStatus } from '../../shared/kitchen.ts';
 import { localDate } from '../../shared/dates.ts';
 import { applyMovement } from './inventory.ts';
 import { can, type User } from './users.ts';
@@ -115,22 +115,27 @@ export function reportWaste(db: DB, user: User, body: Record<string, unknown>, o
       )
       .run(item.id, qtyM, unit, reason, note, photo, user.id, at, localDate(new Date(at)), isDemo ? 1 : 0);
     const id = Number(r.lastInsertRowid);
+    // Lo que se bota ya salió de la nevera: se descuenta de una vez (sin dejar la existencia negativa).
+    take(db, user, id, at, isDemo);
     if (can(user, 'kitchen.manage')) approve(db, user, id, 'Registrada por el administrador', at);
     return getWaste(db, id);
   });
 }
 
-function approve(db: DB, admin: User, id: number, note: string, at: string) {
+/** Descuenta la baja del inventario (lo que haya, hasta la cantidad reportada) y guarda cuánto fue. */
+function take(db: DB, user: User, id: number, at: string, isDemo: boolean) {
   const w = getWaste(db, id);
-  applyMovement(db, {
-    itemId: w.item_id,
-    delta: -w.qty_m,
-    type: 'baja',
-    reason: `Baja #${id}: ${note || w.note || w.reason}`,
-    userId: admin.id,
-    at,
-    isDemo: !!w.is_demo,
-  });
+  const taken = Math.min(w.qty_m, w.item_qty_m);
+  if (taken > 0) {
+    applyMovement(db, { itemId: w.item_id, delta: -taken, type: 'baja', reason: `Baja #${id}: ${w.note || WASTE_REASON_LABELS[w.reason]}`, userId: user.id, at, isDemo });
+  }
+  db.prepare('UPDATE wastes SET taken_m = ? WHERE id = ?').run(taken, id);
+}
+
+function approve(db: DB, admin: User, id: number, note: string, at: string) {
+  const w = db.prepare('SELECT taken_m, is_demo FROM wastes WHERE id = ?').get(id) as { taken_m: number | null; is_demo: number };
+  // Las bajas reportadas antes de este cambio todavía no se habían descontado.
+  if (w.taken_m === null) take(db, admin, id, at, !!w.is_demo);
   db.prepare("UPDATE wastes SET status='aprobada', reviewed_by=?, reviewed_at=?, review_note=? WHERE id=?").run(admin.id, at, note, id);
 }
 
@@ -143,14 +148,14 @@ export function reviewWaste(db: DB, admin: User, id: number, body: Record<string
   const at = opts.at ?? nowIso();
   return tx(db, () => {
     if (decision === 'aprobar') {
-      if (w.item_qty_m < w.qty_m) {
-        throw conflict(
-          `El inventario dice que solo hay ${formatQty(w.item_qty_m, w.item_unit)} de ${w.item_name}. Corrige la existencia (ajuste o conteo) antes de aprobar.`,
-        );
-      }
       approve(db, admin, id, note, at);
     } else {
       if (note.length < 3) throw bad('Explica por qué se rechaza la baja.');
+      // Si no se autoriza, lo descontado vuelve al inventario.
+      const t = db.prepare('SELECT taken_m FROM wastes WHERE id = ?').get(id) as { taken_m: number | null };
+      if (t.taken_m) {
+        applyMovement(db, { itemId: w.item_id, delta: t.taken_m, type: 'baja', reason: `Baja #${id} rechazada: se devuelve al inventario`, userId: admin.id, at, isDemo: !!w.is_demo });
+      }
       db.prepare("UPDATE wastes SET status='rechazada', reviewed_by=?, reviewed_at=?, review_note=? WHERE id=?").run(admin.id, at, note, id);
     }
     return getWaste(db, id);

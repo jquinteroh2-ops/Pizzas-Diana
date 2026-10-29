@@ -120,7 +120,7 @@ type Loaded<T> = ReturnType<typeof useApi<T>>;
 
 // ---------- Por autorizar ----------
 
-function PendingTab({ wastes, counts }: { wastes: Loaded<Waste[]>; counts: Loaded<Count[]> }) {
+export function PendingTab({ wastes, counts }: { wastes: Loaded<Waste[]>; counts: Loaded<Count[]> }) {
   const recent = useApi<Waste[]>('/wastes?limit=20');
   const [reject, setReject] = useState<Waste | null>(null);
   const [review, setReview] = useState<Count | null>(null);
@@ -132,7 +132,7 @@ function PendingTab({ wastes, counts }: { wastes: Loaded<Waste[]>; counts: Loade
     setBusy(w.id);
     try {
       await api.post(`/wastes/${w.id}/review`, { decision: 'aprobar' });
-      toast.success('Baja aprobada', `${w.item_name}: se descontaron ${formatQty(w.qty_m, w.unit)}`);
+      toast.success('Baja autorizada', `${w.item_name}: ${formatQty(w.qty_m, w.unit)}.`);
       bump();
     } catch (e) {
       toast.fail(e);
@@ -255,7 +255,7 @@ function PendingTab({ wastes, counts }: { wastes: Loaded<Waste[]>; counts: Loade
 
 // ---------- Lista de compras ----------
 
-function ShoppingTab({ list }: { list: Loaded<ShoppingLine[]> }) {
+export function ShoppingTab({ list }: { list: Loaded<ShoppingLine[]> }) {
   const { bump } = useApp();
   const toast = useToast();
   const items = useApi<Item[]>('/items');

@@ -16,6 +16,7 @@ import * as shortages from './services/shortages.ts';
 import * as counts from './services/counts.ts';
 import * as plan from './services/plan.ts';
 import * as kitchen from './services/kitchen.ts';
+import * as daySheet from './services/daySheet.ts';
 import { localDate } from '../shared/dates.ts';
 
 const COOKIE = 'pd_session';
@@ -247,6 +248,18 @@ export function createApp(db: DB, opts: { secureCookies?: boolean; staticDir?: s
     res.status(201).json(counts.submitCount(db, req.user!, req.body ?? {}));
   }));
   app.post('/api/counts/:id/review', need('kitchen.manage'), h((req) => counts.reviewCount(db, req.user!, id(req), req.body ?? {})));
+
+  // Hoja del día: inicio, lo que llegó, fin, consumo y validación con la caja.
+  app.get('/api/day-sheet', need('sheet.use'), h((req) => daySheet.getDaySheet(db, req.user!, qStr(req.query.date) ?? localDate())));
+  app.get('/api/day-sheet/days', need('sheet.use'), h((req) => daySheet.sheetDays(db, qStr(req.query.from) ?? '', qStr(req.query.to) ?? '')));
+  app.post('/api/day-sheet/cell', need('sheet.use'), h((req) => daySheet.setCell(db, req.user!, req.body ?? {})));
+  app.post('/api/day-sheet/fill-open', need('sheet.use'), h((req) => daySheet.fillOpen(db, req.user!, req.body ?? {})));
+  app.post('/api/day-sheet/validate', need('sheet.use'), h((req) => daySheet.validateDay(db, req.user!, req.body ?? {})));
+  app.post('/api/day-sheet/reopen', need('sheet.reopen'), h((req) => daySheet.reopenDay(db, req.user!, req.body ?? {})));
+  app.post('/api/day-sheet/items', need('sheet.use'), h((req, res) => {
+    res.status(201).json(daySheet.addIngredient(db, req.user!, req.body ?? {}));
+  }));
+  app.put('/api/day-sheet/items/:id', need('sheet.use'), h((req) => daySheet.editIngredient(db, id(req), req.body ?? {})));
 
   // Plan de preparación semanal.
   app.get('/api/prep-plan', need('kitchen.use'), h((req) => plan.weekPlan(db, qStr(req.query.date))));

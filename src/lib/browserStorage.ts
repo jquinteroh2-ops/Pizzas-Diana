@@ -35,7 +35,7 @@ import type {
   WeekPlan,
   Charts,
 } from './types';
-import { baseOf, compatible, formatQty, isUnit, stockStatus, toMilli, type Unit } from '../../shared/units.ts';
+import { baseOf, compatible, isUnit, stockStatus, toMilli, type Unit } from '../../shared/units.ts';
 import {
   addDays,
   comparablePrev,
@@ -56,6 +56,7 @@ import {
   realConsumption,
   scaleBatch,
   WASTE_REASONS,
+  WASTE_REASON_LABELS,
   type CountKind,
   type CountStatus,
   type ItemKind,
@@ -67,6 +68,19 @@ import {
   type WasteStatus,
 } from '../../shared/kitchen.ts';
 import { CATALOG_ITEMS, CATALOG_PREPARATIONS, CATALOG_PRODUCTS } from '../../shared/catalog.ts';
+import {
+  SHEET_FIELDS,
+  baseChangeFactor,
+  dayStartIso,
+  sheetLine,
+  sortSheet,
+  summarize,
+  type DayMoves,
+  type DaySheet,
+  type DaySheetLine,
+  type SheetStatus,
+  type SoldProduct,
+} from '../../shared/daySheet.ts';
 import { ApiError } from './api';
 
 const STORAGE_KEY = 'pizza_diana_client_db_v5';
@@ -76,7 +90,7 @@ const LEGACY_KEY = 'pizza_diana_client_db_v4';
 export const DEMO_LOGINS: { username: string; password: string; role: Role; label: string }[] = [
   { username: 'admin', password: 'demo1234', role: 'admin', label: 'Administrador' },
   { username: 'caja', password: 'demo1234', role: 'caja', label: 'Caja' },
-  { username: 'cocina', password: 'demo1234', role: 'cocina', label: 'Cocina' },
+  { username: 'cocina', password: 'demo1234', role: 'cocina', label: 'Jefe de cocina' },
 ];
 
 // ---------- Registros guardados ----------
@@ -133,6 +147,8 @@ interface WasteRec {
   reviewed_at: string | null;
   review_note: string;
   is_demo: number;
+  /** Cuánto se descontó al reportarla (undefined = baja de antes: se descuenta al aprobarla). */
+  taken_m?: number;
 }
 interface ShortageRec {
   id: number;
@@ -159,6 +175,23 @@ interface CountRec {
   is_demo: number;
   lines: { item_id: number; item_name: string; expected_m: number; counted_m: number }[];
 }
+interface SheetRec {
+  status: SheetStatus;
+  note: string;
+  validated_by_name: string | null;
+  validated_at: string | null;
+  is_demo: number;
+}
+interface SheetLineRec {
+  local_date: string;
+  item_id: number;
+  open_m: number | null;
+  close_m: number | null;
+  close_sys_m: number | null;
+  adj_m: number;
+  updated_at: string;
+  is_demo: number;
+}
 interface TaskRec {
   id: number;
   local_date: string;
@@ -183,6 +216,9 @@ interface State {
   shortages: ShortageRec[];
   counts: CountRec[];
   tasks: TaskRec[];
+  /** Hoja del día por fecha (las versiones anteriores no la tienen: se crea al cargar). */
+  daySheets: Record<string, SheetRec>;
+  sheetLines: SheetLineRec[];
   demoMode: boolean;
   seq: Record<'item' | 'product' | 'user' | 'mov' | 'prep' | 'prod' | 'waste' | 'short' | 'count' | 'task' | 'sale', number>;
 }
@@ -253,6 +289,8 @@ function emptyState(): State {
     shortages: [],
     counts: [],
     tasks: [],
+    daySheets: {},
+    sheetLines: [],
     demoMode: false,
     seq: { item: 1, product: 1, user: 1, mov: 1, prep: 1, prod: 1, waste: 1, short: 1, count: 1, task: 1, sale: 1000 },
   };
@@ -334,7 +372,12 @@ class BrowserDB {
   private load(): State {
     try {
       const data = localStorage.getItem(STORAGE_KEY);
-      if (data) return JSON.parse(data) as State;
+      if (data) {
+        const st = JSON.parse(data) as State;
+        st.daySheets ??= {};
+        st.sheetLines ??= [];
+        return st;
+      }
       const legacy = localStorage.getItem(LEGACY_KEY);
       if (legacy) {
         const migrated = migrateV4(JSON.parse(legacy));
@@ -751,7 +794,6 @@ class BrowserDB {
     const prevId = this.state.requestIds[requestId];
     if (prevId) return { sale: this.getSale(user, prevId), duplicate: true };
     const pl = this.plan(body);
-    if (pl.shortages.length) throw conflict('No hay existencias suficientes para esta venta.', { shortages: pl.shortages });
     const at = opts.at ?? nowIso();
     const id = `V-${String(this.state.seq.sale++).padStart(5, '0')}`;
     const isDemo = opts.isDemo ?? this.state.demoMode;
@@ -759,7 +801,11 @@ class BrowserDB {
     for (const { p, qty } of pl.products) {
       for (const r of p.recipe) consumption.push({ product_id: p.id, product_name: p.name, item_id: r.item_id, item_name: r.item_name, base_unit: r.base_unit, per_unit_m: r.qty_m, total_m: r.qty_m * qty });
     }
-    for (const r of pl.requirements) this.applyMovement({ itemId: r.item_id, delta: -r.needed_m, type: 'venta', reason: `Venta ${id}`, user, saleId: id, at, isDemo });
+    // Nunca se bloquea la caja: se descuenta lo que hay y la diferencia se ve en la hoja del día.
+    for (const r of pl.requirements) {
+      const take = Math.min(r.needed_m, r.available_m);
+      if (take > 0) this.applyMovement({ itemId: r.item_id, delta: -take, type: 'venta', reason: `Venta ${id}`, user, saleId: id, at, isDemo });
+    }
     const sale: SaleDetail = {
       id,
       created_at: at,
@@ -810,7 +856,8 @@ class BrowserDB {
     const reason = str(body.reason, 'motivo', { min: 3, max: 200 });
     const at = opts.at ?? nowIso();
     const back = new Map<number, number>();
-    for (const c of s.consumption) back.set(c.item_id, (back.get(c.item_id) ?? 0) + c.total_m);
+    // Se devuelve exactamente lo que se descontó (si no alcanzaba, se descontó menos que la receta).
+    for (const m of this.state.movements) if (m.sale_id === s.id && m.type === 'venta') back.set(m.item_id, (back.get(m.item_id) ?? 0) - m.delta_m);
     for (const [itemId, m] of back) this.applyMovement({ itemId, delta: m, type: 'anulacion', reason: `Anulación venta ${s.id}: ${reason}`, user, saleId: s.id, at, isDemo: !!s.is_demo });
     Object.assign(s, { status: 'anulada', annulled_by_name: user.name, annulled_at: at, annul_reason: reason });
     return this.getSale(user, id);
@@ -1093,12 +1140,21 @@ class BrowserDB {
       is_demo: (opts.isDemo ?? this.state.demoMode) ? 1 : 0,
     };
     this.state.wastes.push(w);
+    // Lo que se bota ya salió de la nevera: se descuenta de una vez (sin dejar la existencia negativa).
+    this.takeWaste(user, w, at);
     if (can(user, 'kitchen.manage')) this.approveWaste(user, w, 'Registrada por el administrador', at);
     return this.wasteView(w);
   }
 
+  private takeWaste(user: User, w: WasteRec, at: string) {
+    const taken = Math.min(w.qty_m, this.item(w.item_id).qty_m);
+    if (taken > 0) this.applyMovement({ itemId: w.item_id, delta: -taken, type: 'baja', reason: `Baja #${w.id}: ${w.note || WASTE_REASON_LABELS[w.reason]}`, user, at, isDemo: !!w.is_demo });
+    w.taken_m = taken;
+  }
+
   private approveWaste(admin: User, w: WasteRec, note: string, at: string) {
-    this.applyMovement({ itemId: w.item_id, delta: -w.qty_m, type: 'baja', reason: `Baja #${w.id}: ${note || w.note || w.reason}`, user: admin, at, isDemo: !!w.is_demo });
+    // Las bajas reportadas antes de este cambio todavía no se habían descontado.
+    if (w.taken_m === undefined) this.takeWaste(admin, w, at);
     Object.assign(w, { status: 'aprobada', reviewed_by: admin.id, reviewed_at: at, review_note: note });
   }
 
@@ -1110,11 +1166,11 @@ class BrowserDB {
     const note = optStr(body.note, 200);
     const at = opts.at ?? nowIso();
     if (decision === 'aprobar') {
-      const it = this.item(w.item_id);
-      if (it.qty_m < w.qty_m) throw conflict(`El inventario dice que solo hay ${formatQty(it.qty_m, it.unit)} de ${it.name}. Corrige la existencia (ajuste o conteo) antes de aprobar.`);
       this.approveWaste(admin, w, note, at);
     } else {
       if (note.length < 3) throw bad('Explica por qué se rechaza la baja.');
+      // Si no se autoriza, lo descontado vuelve al inventario.
+      if (w.taken_m) this.applyMovement({ itemId: w.item_id, delta: w.taken_m, type: 'baja', reason: `Baja #${w.id} rechazada: se devuelve al inventario`, user: admin, at, isDemo: !!w.is_demo });
       Object.assign(w, { status: 'rechazada', reviewed_by: admin.id, reviewed_at: at, review_note: note });
     }
     return this.wasteView(w);
@@ -1435,6 +1491,325 @@ class BrowserDB {
     return this.countView(c, true);
   }
 
+  // ---------- Hoja del día ----------
+
+  private sheetRec(date: string): SheetRec | undefined {
+    return this.state.daySheets[date];
+  }
+
+  private ensureSheet(date: string, isDemo?: boolean) {
+    this.state.daySheets[date] ??= { status: 'abierta', note: '', validated_by_name: null, validated_at: null, is_demo: (isDemo ?? this.state.demoMode) ? 1 : 0 };
+  }
+
+  private checkSheetDate(date: unknown, today: string): string {
+    if (typeof date !== 'string' || !isYmd(date)) throw bad('Fecha no válida.');
+    if (date > today) throw bad('Todavía no se puede llenar la hoja de un día que no ha llegado.');
+    return date;
+  }
+
+  private dayMoves(date: string): Map<number, DayMoves> {
+    const from = dayStartIso(date);
+    const to = dayStartIso(addDays(date, 1));
+    const out = new Map<number, DayMoves>();
+    for (const m of this.state.movements) {
+      if (m.created_at < from || m.created_at >= to) continue;
+      if (m.type !== 'entrada' && m.type !== 'produccion') continue;
+      const d = out.get(m.item_id) ?? { entries_m: 0, produced_m: 0, used_m: 0, waste_m: 0 };
+      if (m.type === 'entrada') d.entries_m += m.delta_m;
+      else if (m.delta_m > 0) d.produced_m += m.delta_m;
+      else d.used_m -= m.delta_m;
+      out.set(m.item_id, d);
+    }
+    // Bajas del día en que se reportaron (lo que salió de la nevera), menos las rechazadas.
+    for (const w of this.state.wastes) {
+      if (w.local_date !== date || w.status === 'rechazada') continue;
+      const d = out.get(w.item_id) ?? { entries_m: 0, produced_m: 0, used_m: 0, waste_m: 0 };
+      d.waste_m += w.qty_m;
+      out.set(w.item_id, d);
+    }
+    return out;
+  }
+
+  private stockAt(itemId: number, iso: string): number {
+    let best: Movement | null = null;
+    for (const m of this.state.movements) {
+      if (m.item_id !== itemId || m.created_at >= iso) continue;
+      if (!best || m.created_at > best.created_at || (m.created_at === best.created_at && m.id > best.id)) best = m;
+    }
+    return best?.after_m ?? 0;
+  }
+
+  daySheet(date: unknown, today = localDate()): DaySheet {
+    const d = this.checkSheetDate(date, today);
+    const rec = this.sheetRec(d);
+    const stored = new Map(this.state.sheetLines.filter((l) => l.local_date === d).map((l) => [l.item_id, l]));
+    const moves = this.dayMoves(d);
+    const sales = new Map<number, number>();
+    const soldBy = new Map<number, SoldProduct>();
+    for (const s of this.state.sales) {
+      if (s.local_date !== d || s.status !== 'confirmada') continue;
+      for (const c of s.consumption) sales.set(c.item_id, (sales.get(c.item_id) ?? 0) + c.total_m);
+      for (const i of s.items) {
+        const p = soldBy.get(i.product_id) ?? { product_id: i.product_id, product_name: i.product_name, qty: 0 };
+        p.qty += i.qty;
+        soldBy.set(i.product_id, p);
+      }
+    }
+    // Último fin contado antes de esta fecha, por ingrediente.
+    const prev = new Map<number, { date: string; m: number }>();
+    for (const l of this.state.sheetLines) {
+      if (l.local_date >= d || l.close_m === null) continue;
+      const p = prev.get(l.item_id);
+      if (!p || l.local_date > p.date) prev.set(l.item_id, { date: l.local_date, m: l.close_m });
+    }
+    const empty: DayMoves = { entries_m: 0, produced_m: 0, used_m: 0, waste_m: 0 };
+    const lines = sortSheet(
+      this.state.items
+        .filter((i) => i.active || stored.has(i.id))
+        .map((i) =>
+          sheetLine(
+            {
+              item_id: i.id,
+              name: i.name,
+              location: i.location,
+              kind: i.kind,
+              unit: i.unit,
+              base_unit: i.base_unit,
+              pack_size_m: i.pack_size_m,
+              pack_label: i.pack_label,
+              sort_order: i.sort_order,
+              stock_m: i.qty_m,
+            },
+            stored.get(i.id),
+            moves.get(i.id) ?? empty,
+            sales.get(i.id) ?? 0,
+            prev.get(i.id)?.m ?? null,
+          ),
+        ),
+      LOCATIONS,
+    );
+    const sold = [...soldBy.values()].sort((a, b) => b.qty - a.qty || a.product_name.localeCompare(b.product_name, 'es'));
+    const status = rec?.status ?? 'abierta';
+    return {
+      date: d,
+      status,
+      validated_by_name: rec?.validated_by_name ?? null,
+      validated_at: rec?.validated_at ?? null,
+      note: rec?.note ?? '',
+      editable: status === 'abierta',
+      entries_editable: status === 'abierta' && d === today,
+      lines,
+      sold,
+      sold_units: sold.reduce((s, p) => s + p.qty, 0),
+      summary: summarize(lines),
+    };
+  }
+
+  setCell(user: User, body: Body, opts: Opts = {}): DaySheetLine {
+    const at = opts.at ?? nowIso();
+    const today = dayOf(at);
+    const date = this.checkSheetDate(body.date, today);
+    const field = oneOf(body.field, 'casilla', SHEET_FIELDS);
+    const it = this.item(Number(body.item_id));
+    const raw = body.value_m;
+    const value = raw === null || raw === undefined || raw === '' ? null : Math.round(num(raw, `cantidad de ${it.name}`));
+    if (this.sheetRec(date)?.status === 'validada') throw conflict('Esta hoja ya fue validada. Para corregirla, el administrador debe volver a abrirla.');
+    if (field === 'entry') {
+      if (date !== today) throw bad('Lo que llegó solo se anota el mismo día.');
+      if (!it.active) throw conflict(`"${it.name}" está desactivado.`);
+      this.ensureSheet(date, opts.isDemo);
+      const current = this.dayMoves(date).get(it.id)?.entries_m ?? 0;
+      const delta = Math.max((value ?? 0) - current, -it.qty_m);
+      if (delta !== 0) {
+        this.applyMovement({
+          itemId: it.id,
+          delta,
+          type: 'entrada',
+          reason: delta > 0 ? 'Llegó (hoja del día)' : 'Corrección de lo que llegó (hoja del día)',
+          user,
+          at,
+          isDemo: opts.isDemo,
+        });
+      }
+      // Lo que llegó cierra los faltantes reportados de ese ingrediente.
+      if (delta > 0) {
+        for (const s of this.state.shortages) {
+          if (s.item_id === it.id && (s.status === 'abierto' || s.status === 'pedido')) Object.assign(s, { status: 'recibido', updated_at: at });
+        }
+      }
+    } else {
+      this.ensureSheet(date, opts.isDemo);
+      let line = this.state.sheetLines.find((l) => l.local_date === date && l.item_id === it.id);
+      if (!line && value !== null) {
+        line = { local_date: date, item_id: it.id, open_m: null, close_m: null, close_sys_m: null, adj_m: 0, updated_at: at, is_demo: (opts.isDemo ?? this.state.demoMode) ? 1 : 0 };
+        this.state.sheetLines.push(line);
+      }
+      if (line) {
+        line.updated_at = at;
+        if (field === 'open') line.open_m = value;
+        else {
+          line.close_m = value;
+          // Lo que decía el sistema al contar: al validar se ajusta contra ese momento.
+          line.close_sys_m = value === null ? null : date === today ? it.qty_m : this.stockAt(it.id, dayStartIso(addDays(date, 1)));
+        }
+      }
+    }
+    const l = this.daySheet(date, today).lines.find((x) => x.item_id === it.id);
+    if (!l) throw notFound('Ingrediente no encontrado.');
+    return l;
+  }
+
+  fillOpen(body: Body, opts: Opts = {}): DaySheet {
+    const at = opts.at ?? nowIso();
+    const today = dayOf(at);
+    const date = this.checkSheetDate(body.date, today);
+    const source = oneOf(body.source ?? 'ayer', 'origen', ['ayer', 'sistema'] as const);
+    if (this.sheetRec(date)?.status === 'validada') throw conflict('Esta hoja ya fue validada.');
+    let filled = 0;
+    for (const l of this.daySheet(date, today).lines) {
+      if (l.open_m !== null) continue;
+      const v = source === 'ayer' ? l.prev_close_m : l.stock_m;
+      if (v === null) continue;
+      const rec = this.state.sheetLines.find((x) => x.local_date === date && x.item_id === l.item_id);
+      if (rec) Object.assign(rec, { open_m: v, updated_at: at });
+      else this.state.sheetLines.push({ local_date: date, item_id: l.item_id, open_m: v, close_m: null, close_sys_m: null, adj_m: 0, updated_at: at, is_demo: this.state.demoMode ? 1 : 0 });
+      filled++;
+    }
+    if (!filled) throw bad(source === 'ayer' ? 'No hay un fin del día anterior para copiar (o el inicio ya está lleno).' : 'El inicio ya está lleno.');
+    this.ensureSheet(date);
+    return this.daySheet(date, today);
+  }
+
+  validateDay(user: User, body: Body, opts: Opts = {}): DaySheet {
+    const at = opts.at ?? nowIso();
+    const today = dayOf(at);
+    const date = this.checkSheetDate(body.date, today);
+    if (this.sheetRec(date)?.status === 'validada') throw conflict('Esta hoja ya fue validada.');
+    const lines = this.state.sheetLines.filter((l) => l.local_date === date && l.close_m !== null);
+    if (!lines.length) throw bad('Primero escribe el Fin (lo que quedó al cerrar) de al menos un ingrediente.');
+    this.ensureSheet(date, opts.isDemo);
+    for (const l of lines) {
+      if (l.close_sys_m === null) continue;
+      const delta = Math.max(l.close_m! - l.close_sys_m, -this.item(l.item_id).qty_m);
+      if (delta !== 0) {
+        this.applyMovement({ itemId: l.item_id, delta, type: 'conteo', reason: `Hoja del ${date} (${delta > 0 ? 'sobraba' : 'faltaba'})`, user, at, isDemo: opts.isDemo });
+      }
+      l.adj_m = delta;
+    }
+    Object.assign(this.state.daySheets[date], { status: 'validada', note: optStr(body.note, 500), validated_by_name: user.name, validated_at: at });
+    return this.daySheet(date, today);
+  }
+
+  reopenDay(user: User, body: Body): DaySheet {
+    const at = nowIso();
+    const today = dayOf(at);
+    const date = this.checkSheetDate(body.date, today);
+    if (this.sheetRec(date)?.status !== 'validada') throw conflict('Esta hoja no está validada.');
+    for (const l of this.state.sheetLines) {
+      if (l.local_date !== date || !l.adj_m) continue;
+      const delta = Math.max(-l.adj_m, -this.item(l.item_id).qty_m);
+      if (delta !== 0) this.applyMovement({ itemId: l.item_id, delta, type: 'conteo', reason: `Se volvió a abrir la hoja del ${date}`, user, at });
+      l.adj_m = 0;
+    }
+    Object.assign(this.state.daySheets[date], { status: 'abierta', validated_by_name: null, validated_at: null });
+    return this.daySheet(date, today);
+  }
+
+  sheetDays(from: string, to: string) {
+    if (!isYmd(from) || !isYmd(to)) throw bad('Fecha no válida.');
+    return Object.entries(this.state.daySheets)
+      .filter(([d]) => d >= from && d <= to)
+      .sort(([a], [b]) => b.localeCompare(a))
+      .map(([date, r]) => {
+        const lines = this.state.sheetLines.filter((l) => l.local_date === date);
+        return {
+          date,
+          status: r.status,
+          validated_at: r.validated_at,
+          validated_by_name: r.validated_by_name,
+          open_filled: lines.filter((l) => l.open_m !== null).length,
+          close_filled: lines.filter((l) => l.close_m !== null).length,
+        };
+      });
+  }
+
+  addIngredient(user: User, body: Body): Item {
+    const location = oneOf(body.location, 'lugar', LOCATIONS);
+    const kind = body.kind === 'preparacion' ? 'preparacion' : 'insumo';
+    const last = this.state.items.filter((i) => i.location === location).reduce((m, i) => Math.max(m, i.sort_order), 0);
+    const category = typeof body.category === 'string' && body.category ? body.category : kind === 'preparacion' ? 'Productos preparados' : 'Ingredientes';
+    return this.createItem(user, {
+      name: body.name,
+      category,
+      unit: body.unit,
+      qty: 0,
+      min: body.min ?? 0,
+      location,
+      kind,
+      sort_order: last + 10,
+      pack_size: body.pack_size,
+      pack_unit: body.pack_unit,
+      pack_label: body.pack_label,
+    });
+  }
+
+  /** Cambia la unidad base de un ingrediente y convierte todo lo guardado con el mismo factor. */
+  private changeItemBase(id: number, unit: Unit, perUnit: unknown) {
+    const it = this.item(id);
+    const to = baseOf(unit);
+    if (to === it.base_unit) return;
+    const needsWeight = it.base_unit === 'unidad' || to === 'unidad';
+    const per = needsWeight ? num(perUnit, `cuánto ${it.base_unit === 'ml' || to === 'ml' ? 'mide' : 'pesa'} una unidad`, { allowZero: false }) : 1;
+    const f = baseChangeFactor(it.base_unit, to, per);
+    const r = (n: number) => Math.round(n * f);
+    const rp = (n: number) => Math.max(1, r(n));
+    const rn = (n: number | null) => (n === null ? null : r(n));
+    const small: Unit = to === 'g' ? 'g' : to === 'ml' ? 'ml' : 'unidad';
+    Object.assign(it, { base_unit: to, unit, qty_m: r(it.qty_m), min_m: r(it.min_m), pack_size_m: r(it.pack_size_m), updated_at: nowIso() });
+    it.status = stockStatus(it.qty_m, it.min_m);
+    for (const p of this.state.products) for (const l of p.recipe) if (l.item_id === id) Object.assign(l, { qty_m: rp(l.qty_m), unit: small });
+    for (const p of this.state.preparations) {
+      for (const l of p.inputs) if (l.item_id === id) Object.assign(l, { qty_m: rp(l.qty_m), unit: small });
+      if (p.output_item_id === id) {
+        p.std_output_m = rp(p.std_output_m);
+        for (const t of this.state.tasks) if (t.preparation_id === p.id && t.target_m !== null) t.target_m = r(t.target_m);
+      }
+    }
+    for (const m of this.state.movements) if (m.item_id === id) Object.assign(m, { delta_m: r(m.delta_m), after_m: r(m.after_m), base_unit: to, unit });
+    for (const s of this.state.sales) for (const c of s.consumption) if (c.item_id === id) Object.assign(c, { per_unit_m: r(c.per_unit_m), total_m: r(c.total_m), base_unit: to });
+    for (const p of this.state.productions) {
+      for (const l of p.inputs) if (l.item_id === id) l.qty_m = rp(l.qty_m);
+      if (p.output_item_id === id) Object.assign(p, { output_m: rp(p.output_m), expected_m: r(p.expected_m), merma_util_m: r(p.merma_util_m), merma_inutil_m: r(p.merma_inutil_m) });
+    }
+    for (const w of this.state.wastes) if (w.item_id === id) Object.assign(w, { qty_m: rp(w.qty_m), unit: small });
+    for (const c of this.state.counts) for (const l of c.lines) if (l.item_id === id) Object.assign(l, { expected_m: r(l.expected_m), counted_m: r(l.counted_m) });
+    for (const l of this.state.sheetLines) {
+      if (l.item_id === id) Object.assign(l, { open_m: rn(l.open_m), close_m: rn(l.close_m), close_sys_m: rn(l.close_sys_m), adj_m: r(l.adj_m) });
+    }
+  }
+
+  editIngredient(id: number, body: Body): Item {
+    const it = this.item(id);
+    const wasActive = it.active;
+    if (body.unit !== undefined) {
+      if (!isUnit(body.unit)) throw bad('Unidad de medida no válida.');
+      this.changeItemBase(id, body.unit, body.per_unit);
+    }
+    const updated = this.updateItem(id, {
+      name: body.name,
+      location: body.location,
+      kind: body.kind,
+      unit: body.unit,
+      min: body.min,
+      pack_size: body.pack_size,
+      pack_unit: body.pack_unit,
+      pack_label: body.pack_label,
+      category: typeof body.category === 'string' && body.category ? body.category : undefined,
+    });
+    if (body.active === false && wasActive) return this.setItemActive(id, false);
+    return updated;
+  }
+
   // ---------- Plan de preparación ----------
 
   private taskView(t: TaskRec): PrepTask {
@@ -1748,6 +2123,8 @@ class BrowserDB {
     s.wastes = s.wastes.filter((w) => !w.is_demo);
     s.shortages = s.shortages.filter((x) => !x.is_demo);
     s.counts = s.counts.filter((c) => !c.is_demo);
+    s.sheetLines = s.sheetLines.filter((l) => !l.is_demo && !demoItems.has(l.item_id));
+    s.daySheets = Object.fromEntries(Object.entries(s.daySheets).filter(([, r]) => !r.is_demo));
     s.preparations = s.preparations.filter((p) => !p.is_demo);
     s.movements = s.movements.filter((m) => !m.is_demo && !demoItems.has(m.item_id));
     s.sales = s.sales.filter((x) => !x.is_demo);
@@ -1948,15 +2325,11 @@ function buildDemoState(keepUsers?: UserRec[]): State {
   // Apertura y cierre de la última semana; al cerrar, unos productos se gastaron un poco más de lo vendido.
   const EXTRA_USE: Record<string, number> = { queso_mozzarella: 0.06, tocineta: 0.1, papas: 0.08, pepperoni: 0.07 };
   const soldSince = (id: number, from: string) => s.movements.filter((m) => m.item_id === id && m.type === 'venta' && m.created_at >= from).reduce((n, m) => n - m.delta_m, 0);
-  const countAll = (kind: 'apertura' | 'cierre', at: string, openedAt?: string) => {
-    for (const location of new Set(CATALOG_ITEMS.map((c) => c.location))) {
-      const lines = CATALOG_ITEMS.filter((c) => c.location === location).map((c) => {
-        const it = db.item(itemId[c.key]);
-        const extra = kind === 'cierre' && openedAt ? Math.round(soldSince(it.id, openedAt) * (EXTRA_USE[c.key] ?? 0)) : 0;
-        return { item_id: it.id, qty: Math.max(0, it.qty_m - extra) / 1000, unit: it.base_unit };
-      });
-      const c = db.submitCount(cook1, { location, kind, lines }, { at, ...demo });
-      db.reviewCount(admin, c.id, { decision: 'aplicar' }, { at: new Date(new Date(at).getTime() + 15 * 60_000).toISOString() });
+  const fillSheet = (day: string, field: 'open' | 'close', at: string, openedAt?: string) => {
+    for (const c of CATALOG_ITEMS) {
+      const it = db.item(itemId[c.key]);
+      const extra = field === 'close' && openedAt ? Math.round(soldSince(it.id, openedAt) * (EXTRA_USE[c.key] ?? 0)) : 0;
+      db.setCell(cook1, { date: day, item_id: it.id, field, value_m: Math.max(0, it.qty_m - extra) }, { at, ...demo });
     }
   };
 
@@ -1973,7 +2346,7 @@ function buildDemoState(keepUsers?: UserRec[]): State {
       }
     }
     const withCounts = i >= DAYS - 7;
-    if (withCounts && new Date(bogota(day, 8, 30)) <= now) countAll('apertura', bogota(day, 8, 30));
+    if (withCounts && new Date(bogota(day, 8, 30)) <= now) fillSheet(day, 'open', bogota(day, 8, 30));
     const plan = WEEK_PLAN[dow];
     if (day >= planFrom) for (const key of plan) db.addTask({ date: day, preparation_id: prepId[key] }, demo);
     plan.forEach((key, idx) => {
@@ -2012,7 +2385,11 @@ function buildDemoState(keepUsers?: UserRec[]): State {
       }
     }
     // Cierre del día, después de las bajas de la noche.
-    if (withCounts && !isToday) countAll('cierre', bogota(day, 23, 15), bogota(day, 8, 30));
+    if (withCounts && !isToday) {
+      fillSheet(day, 'close', bogota(day, 23, 15), bogota(day, 8, 30));
+      // El último día cerrado queda sin validar, para que se vea cómo se valida.
+      if (i < DAYS - 1) db.validateDay(cook1, { date: day, note: '' }, { at: bogota(day, 23, 40), ...demo });
+    }
   }
   for (const idx of [Math.floor(saleIds.length * 0.4), Math.floor(saleIds.length * 0.6)]) {
     const sale = s.sales.find((x) => x.id === saleIds[idx]);
@@ -2020,18 +2397,6 @@ function buildDemoState(keepUsers?: UserRec[]): State {
   }
 
   const ago = (m: number) => new Date(now.getTime() - m * 60_000).toISOString();
-  const countLines = (location: string, skew: (k: string) => number) =>
-    CATALOG_ITEMS.filter((c) => c.location === location).map((c) => {
-      const it = db.item(itemId[c.key]);
-      return { item_id: it.id, qty: Math.max(0, Math.round(it.qty_m * skew(c.key)) / 1000), unit: it.base_unit };
-    });
-  const last = db.submitCount(cook1, { location: 'Nevera Coca-Cola', lines: countLines('Nevera Coca-Cola', (k) => (k === 'tomate' ? 0.9 : 1)) }, { at: ago(60 * 24 * 6), ...demo });
-  db.reviewCount(admin, last.id, { decision: 'aplicar' }, { at: ago(60 * 24 * 6 - 30) });
-  db.submitCount(
-    cook1,
-    { location: 'Congelador', lines: countLines('Congelador', (k) => (k === 'tocineta' ? 0.82 : k === 'pepperoni' ? 0.93 : k === 'salami' ? 1.05 : 1)), note: 'Conteo de apertura (DEMO)' },
-    { at: ago(95), ...demo },
-  );
   const tomate = db.item(itemId.tomate);
   if (tomate.qty_m > 0) db.reportWaste(cook1, { item_id: tomate.id, qty: Math.min(400, tomate.qty_m / 1000), unit: 'g', reason: 'danado', note: 'Poca rotación, tenía moho (DEMO)', photo: DEMO_PHOTO }, { at: ago(80), ...demo });
   const masa = db.item(itemId.masa);
@@ -2166,6 +2531,14 @@ async function route(method: string, path: string, body: Body): Promise<unknown>
   if (clean === '/counts' && POST) return need('kitchen.use'), write(() => db.submitCount(user, body));
   if ((mm = m(/^\/counts\/(\d+)\/review$/))) return need('kitchen.manage'), write(() => db.reviewCount(user, Number(mm![1]), body));
   if ((mm = m(/^\/counts\/(\d+)$/))) return need('kitchen.use'), db.getCount(user, Number(mm[1]));
+  if (clean === '/day-sheet' && GET) return need('sheet.use'), db.daySheet(qs('date') ?? localDate());
+  if (clean === '/day-sheet/days') return need('sheet.use'), db.sheetDays(qs('from') ?? '', qs('to') ?? '');
+  if (clean === '/day-sheet/cell' && POST) return need('sheet.use'), write(() => db.setCell(user, body));
+  if (clean === '/day-sheet/fill-open' && POST) return need('sheet.use'), write(() => db.fillOpen(body));
+  if (clean === '/day-sheet/validate' && POST) return need('sheet.use'), write(() => db.validateDay(user, body));
+  if (clean === '/day-sheet/reopen' && POST) return need('sheet.reopen'), write(() => db.reopenDay(user, body));
+  if (clean === '/day-sheet/items' && POST) return need('sheet.use'), write(() => db.addIngredient(user, body));
+  if ((mm = m(/^\/day-sheet\/items\/(\d+)$/)) && PUT) return need('sheet.use'), write(() => db.editIngredient(Number(mm![1]), body));
   if (clean === '/prep-plan' && GET) return need('kitchen.use'), db.weekPlan(qs('date'));
   if (clean === '/prep-plan' && POST) return need('kitchen.manage'), write(() => db.addTask(body));
   if (clean === '/prep-plan/copy-previous') return need('kitchen.manage'), write(() => db.copyPreviousWeek(body.date));

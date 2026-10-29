@@ -28,7 +28,7 @@ const NO_PASSWORD_MANAGER = {
 const ROLE_INFO: Record<Role, { icon: LucideIcon; text: string; tone: string }> = {
   admin: { icon: ShieldCheck, text: 'Ve y controla todo: inventario, cocina, recetas, autorizaciones, estadísticas y usuarios.', tone: 'bg-brand-600 text-white' },
   caja: { icon: ShoppingBag, text: 'Registra las ventas y avisa faltantes y bajas. No cambia recetas ni existencias.', tone: 'bg-crust-300 text-ink-900' },
-  cocina: { icon: ChefHat, text: 'Ve el inventario, registra lo que prepara, cuenta neveras y avisa faltantes y bajas. No vende ni ve estadísticas.', tone: 'bg-emerald-600 text-white' },
+  cocina: { icon: ChefHat, text: 'Llena la hoja del día (inicio, lo que llegó y fin), registra preparaciones y bajas, agrega ingredientes y valida el día contra la caja. No vende ni ve estadísticas.', tone: 'bg-emerald-600 text-white' },
 };
 
 export default function UsersPage() {

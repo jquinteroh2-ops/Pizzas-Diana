@@ -7,7 +7,7 @@ export type Role = (typeof ROLES)[number];
 export const ROLE_LABELS: Record<Role, string> = {
   admin: 'Administrador',
   caja: 'Caja',
-  cocina: 'Cocina',
+  cocina: 'Jefe de cocina',
 };
 
 // Permisos extra que el administrador puede conceder a caja o cocina.
@@ -31,7 +31,11 @@ export type Action =
   /** Reportar faltantes y bajas (cualquier usuario). */
   | 'kitchen.report'
   /** Preparaciones, plan semanal, autorizar bajas y conteos, lista de compras. */
-  | 'kitchen.manage';
+  | 'kitchen.manage'
+  /** La hoja del día: contar inicio y fin, anotar lo que llegó, agregar ingredientes y validar con la caja. */
+  | 'sheet.use'
+  /** Volver a abrir una hoja ya validada (solo el administrador). */
+  | 'sheet.reopen';
 
 export function can(user: { role: Role; perms: readonly string[] } | null | undefined, action: Action): boolean {
   if (!user) return false;
@@ -42,12 +46,14 @@ export function can(user: { role: Role; perms: readonly string[] } | null | unde
     case 'inventory.view':
       return user.role === 'cocina' || user.perms.includes('entradas');
     case 'inventory.entry':
-      return user.perms.includes('entradas');
+      // La jefa de cocina anota lo que llega.
+      return user.role === 'cocina' || user.perms.includes('entradas');
     case 'reports.view':
       return user.perms.includes('reportes');
     case 'sales.viewAll':
       return user.perms.includes('historial_completo');
     case 'kitchen.use':
+    case 'sheet.use':
       return user.role === 'cocina';
     case 'kitchen.report':
       return true;

@@ -13,6 +13,8 @@ export function canDo(user: User | null, action: Action): boolean {
 // ---------- Rutas por hash (#/inventario?item=3) ----------
 
 export type RouteName =
+  | 'hoy'
+  | 'hoja'
   | 'hoja-inventario'
   | 'hoja-ventas'
   | 'hoja-merma'
@@ -85,6 +87,8 @@ export function AppProvider({
   const bump = useCallback(() => setVersion((v) => v + 1), []);
   const logout = useCallback(async () => {
     await api.post('/logout').catch(() => undefined);
+    // Quien entre después empieza en su pantalla de inicio, no en la que dejó el anterior.
+    history.replaceState(null, '', window.location.pathname + window.location.search);
     await reloadSession();
   }, [reloadSession]);
   const value = useMemo<AppCtx>(

@@ -16,6 +16,9 @@ const ITEM_COLUMNS = [
   'sort_order  INTEGER NOT NULL DEFAULT 0', // orden en la hoja de conteo
 ];
 
+// Cuánto se descontó del inventario al reportar la baja (NULL = baja de antes: se descuenta al aprobarla).
+const WASTE_TAKEN_COLUMN = 'taken_m INTEGER';
+
 // Apertura y cierre del día (o un conteo suelto). La migración 2 la agrega a bases anteriores.
 const COUNT_KIND_COLUMN = "kind TEXT NOT NULL DEFAULT 'libre' CHECK (kind IN ('apertura','cierre','libre'))";
 
@@ -182,7 +185,7 @@ CREATE TABLE IF NOT EXISTS production_inputs (
   PRIMARY KEY (production_id, item_id)
 );
 
--- Bajas (reemplaza el formato de bajas en papel). Solo descuentan al aprobarlas.
+-- Bajas (reemplaza el formato de bajas en papel). Se descuentan al reportarlas; si se rechazan, se devuelven.
 CREATE TABLE IF NOT EXISTS wastes (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   item_id      INTEGER NOT NULL REFERENCES items(id),
@@ -198,7 +201,8 @@ CREATE TABLE IF NOT EXISTS wastes (
   reviewed_by  INTEGER REFERENCES users(id),
   reviewed_at  TEXT,
   review_note  TEXT NOT NULL DEFAULT '',
-  is_demo      INTEGER NOT NULL DEFAULT 0
+  is_demo      INTEGER NOT NULL DEFAULT 0,
+  ${WASTE_TAKEN_COLUMN}
 );
 CREATE INDEX IF NOT EXISTS idx_wastes_status ON wastes(status, reported_at);
 
@@ -253,6 +257,28 @@ CREATE TABLE IF NOT EXISTS prep_tasks (
   is_demo        INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_date ON prep_tasks(local_date);
+
+-- Hoja del día (una por fecha): lo que se contó al abrir y al cerrar, y si la jefa de cocina ya la validó.
+CREATE TABLE IF NOT EXISTS day_sheets (
+  local_date   TEXT PRIMARY KEY,
+  status       TEXT NOT NULL DEFAULT 'abierta' CHECK (status IN ('abierta','validada')),
+  note         TEXT NOT NULL DEFAULT '',
+  validated_by INTEGER REFERENCES users(id),
+  validated_at TEXT,
+  is_demo      INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS day_sheet_lines (
+  local_date  TEXT NOT NULL,
+  item_id     INTEGER NOT NULL REFERENCES items(id),
+  open_m      INTEGER CHECK (open_m >= 0),
+  close_m     INTEGER CHECK (close_m >= 0),
+  close_sys_m INTEGER,               -- lo que decía el sistema cuando se contó el fin
+  adj_m       INTEGER NOT NULL DEFAULT 0, -- ajuste aplicado al validar (para poder reabrir)
+  updated_by  INTEGER NOT NULL REFERENCES users(id),
+  updated_at  TEXT NOT NULL,
+  is_demo     INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (local_date, item_id)
+);
 `;
 
 /**
@@ -283,6 +309,12 @@ const MIGRATIONS: ((db: DB) => void)[] = [
   (db) => {
     if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='counts'").get()) {
       db.exec(`ALTER TABLE counts ADD COLUMN ${COUNT_KIND_COLUMN}`);
+    }
+  },
+  // 3. Las bajas se descuentan al reportarlas: se guarda cuánto se descontó.
+  (db) => {
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='wastes'").get()) {
+      db.exec(`ALTER TABLE wastes ADD COLUMN ${WASTE_TAKEN_COLUMN}`);
     }
   },
 ];

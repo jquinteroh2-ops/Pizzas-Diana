@@ -13,7 +13,7 @@ import { annulSale, previewSale, registerSale } from './sales.ts';
 import { createPreparation, getPreparation, registerProduction } from './preparations.ts';
 import { reportWaste, reviewWaste } from './wastes.ts';
 import { reportShortage, setShortageStatus } from './shortages.ts';
-import { reviewCount, submitCount } from './counts.ts';
+import { setCell, validateDay } from './daySheet.ts';
 import { getUser, insertDemoUser, type User } from './users.ts';
 import type { Unit } from '../../shared/units.ts';
 
@@ -197,15 +197,12 @@ export function loadDemo(db: DB, admin: User, now = new Date()) {
     // más de lo que dicen las recetas (porciones grandes, picoteo): así se ve en «Caja vs cocina».
     const EXTRA_USE: Record<string, number> = { queso_mozzarella: 0.06, tocineta: 0.1, papas: 0.08, pepperoni: 0.07 };
     const soldSince = db.prepare("SELECT COALESCE(-SUM(delta_m), 0) n FROM movements WHERE item_id = ? AND type = 'venta' AND created_at >= ?");
-    const countAll = (kind: 'apertura' | 'cierre', at: string, openedAt?: string) => {
-      for (const location of new Set(CATALOG_ITEMS.map((c) => c.location))) {
-        const lines = CATALOG_ITEMS.filter((c) => c.location === location).map((c) => {
-          const it = getItem(db, itemId[c.key]);
-          const extra = kind === 'cierre' && openedAt ? Math.round((soldSince.get(it.id, openedAt) as { n: number }).n * (EXTRA_USE[c.key] ?? 0)) : 0;
-          return { item_id: it.id, qty: Math.max(0, it.qty_m - extra) / 1000, unit: it.base_unit };
-        });
-        const c = submitCount(db, carlos, { location, kind, lines }, { at, isDemo: true });
-        reviewCount(db, admin, c.id, { decision: 'aplicar' }, { at: new Date(new Date(at).getTime() + 15 * 60_000).toISOString() });
+    // La hoja del día: inicio al abrir, fin al cerrar (con el gasto de más) y la validación de la jefa de cocina.
+    const fillSheet = (day: string, field: 'open' | 'close', at: string, openedAt?: string) => {
+      for (const c of CATALOG_ITEMS) {
+        const it = getItem(db, itemId[c.key]);
+        const extra = field === 'close' && openedAt ? Math.round((soldSince.get(it.id, openedAt) as { n: number }).n * (EXTRA_USE[c.key] ?? 0)) : 0;
+        setCell(db, carlos, { date: day, item_id: it.id, field, value_m: Math.max(0, it.qty_m - extra) }, { at });
       }
     };
     for (let i = 0; i <= DAYS; i++) {
@@ -226,7 +223,7 @@ export function loadDemo(db: DB, admin: User, now = new Date()) {
       }
 
       const withCounts = i >= DAYS - 7;
-      if (withCounts && new Date(bogota(day, 8, 30)) <= now) countAll('apertura', bogota(day, 8, 30));
+      if (withCounts && new Date(bogota(day, 8, 30)) <= now) fillSheet(day, 'open', bogota(day, 8, 30));
 
       // Plan del día (se guarda para la semana pasada y la actual) y lo que prepara la cocina en la mañana.
       const plan = DEMO_WEEK_PLAN[dow];
@@ -288,7 +285,11 @@ export function loadDemo(db: DB, admin: User, now = new Date()) {
       }
 
       // Cierre del día, después de las bajas de la noche.
-      if (withCounts && !isToday) countAll('cierre', bogota(day, 23, 15), bogota(day, 8, 30));
+      if (withCounts && !isToday) {
+        fillSheet(day, 'close', bogota(day, 23, 15), bogota(day, 8, 30));
+        // El último día cerrado queda sin validar, para que se vea cómo se valida.
+        if (i < DAYS - 1) validateDay(db, carlos, { date: day, note: '' }, { at: bogota(day, 23, 40) });
+      }
     }
 
     // Un par de ventas anuladas para que se vea el flujo de auditoría.
@@ -301,21 +302,6 @@ export function loadDemo(db: DB, admin: User, now = new Date()) {
 
     // ---- Lo pendiente de hoy, para que el administrador vea su bandeja ----
     const minutesAgo = (m: number) => new Date(now.getTime() - m * 60_000).toISOString();
-    // Conteo de la semana pasada (aplicado) y conteo de hoy del congelador (pendiente de revisar).
-    const countLines = (location: string, skew: (k: string) => number) =>
-      CATALOG_ITEMS.filter((c) => c.location === location).map((c) => {
-        const it = getItem(db, itemId[c.key]);
-        return { item_id: it.id, qty: Math.max(0, Math.round(it.qty_m * skew(c.key)) / 1000), unit: it.base_unit };
-      });
-    const lastWeek = submitCount(db, carlos, { location: 'Nevera Coca-Cola', lines: countLines('Nevera Coca-Cola', (k) => (k === 'tomate' ? 0.9 : 1)) }, { at: minutesAgo(60 * 24 * 6), isDemo: true });
-    reviewCount(db, admin, lastWeek.id, { decision: 'aplicar' }, { at: minutesAgo(60 * 24 * 6 - 30) });
-    submitCount(
-      db,
-      carlos,
-      { location: 'Congelador', lines: countLines('Congelador', (k) => (k === 'tocineta' ? 0.82 : k === 'pepperoni' ? 0.93 : k === 'salami' ? 1.05 : 1)), note: 'Conteo de apertura (DEMO)' },
-      { at: minutesAgo(95), isDemo: true },
-    );
-
     // Bajas de hoy esperando autorización.
     const tomate = getItem(db, itemId.tomate);
     if (tomate.qty_m > 0) {
@@ -345,6 +331,8 @@ export function clearDemo(db: DB) {
       DELETE FROM wastes WHERE is_demo = 1;
       DELETE FROM shortages WHERE is_demo = 1;
       DELETE FROM counts WHERE is_demo = 1;
+      DELETE FROM day_sheet_lines WHERE is_demo = 1;
+      DELETE FROM day_sheets WHERE is_demo = 1;
       DELETE FROM preparations WHERE is_demo = 1;
       DELETE FROM movements WHERE is_demo = 1;
       DELETE FROM sales WHERE is_demo = 1;

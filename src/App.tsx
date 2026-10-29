@@ -17,9 +17,13 @@ import SettingsPage from './pages/Settings';
 import Kitchen from './pages/Kitchen';
 import PrepPlan from './pages/PrepPlan';
 import TopSellers from './pages/TopSellers';
+import AdminHoy from './pages/AdminHoy';
+import HojaDia from './pages/HojaDia';
 import { HojaBajas, HojaInventario, HojaMasa, HojaMerma, HojaVentas } from './pages/SheetPages';
 
 const PAGES: Record<RouteName, () => React.JSX.Element> = {
+  hoy: AdminHoy,
+  hoja: HojaDia,
   'hoja-inventario': HojaInventario,
   'hoja-ventas': HojaVentas,
   'hoja-merma': HojaMerma,
@@ -40,8 +44,8 @@ const PAGES: Record<RouteName, () => React.JSX.Element> = {
 
 function Routed() {
   const route = useHashRoute();
-  const { can } = useApp();
-  const allowed = allowedNav(can);
+  const { can, user } = useApp();
+  const allowed = allowedNav(can, user.role);
   const ok = allowed.some((n) => n.name === route.name);
 
   // Si la ruta no existe o no hay permiso, ir a la primera sección permitida.

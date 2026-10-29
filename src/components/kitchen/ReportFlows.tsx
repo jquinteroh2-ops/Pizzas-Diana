@@ -172,9 +172,9 @@ export function WasteFlow({ onClose }: { onClose: () => void }) {
     >
       {sent ? (
         <Sent
-          title={sent.status === 'aprobada' ? 'Aprobada y descontada del inventario' : 'Quedó pendiente de autorizar'}
+          title={sent.status === 'aprobada' ? 'Baja registrada y autorizada' : 'Quedó pendiente de autorizar'}
           text={`${formatQty(sent.qty_m, sent.unit)} de ${sent.item_name} · ${WASTE_REASON_LABELS[sent.reason]}.${
-            sent.status === 'pendiente' ? ' Se descuenta del inventario cuando el administrador la apruebe.' : ''
+            sent.status === 'pendiente' ? ' Ya se descontó del inventario. El administrador la revisa con la foto; si no la autoriza, vuelve al inventario.' : ' Ya se descontó del inventario.'
           }`}
           onAgain={reset}
           againText="Dar de baja otro producto"

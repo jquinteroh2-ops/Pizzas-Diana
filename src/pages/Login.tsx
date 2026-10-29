@@ -64,12 +64,12 @@ export default function Login({ session, onDone }: { session: Session; onDone: (
             <span className="text-crust-300">bajo control.</span>
           </p>
           <p className="mt-5 text-base text-white/65">
-            Caja vende, la cocina prepara y avisa lo que falta, y el inventario se descuenta solo, según la receta de cada plato.
+            La caja vende, la cocina llena la hoja del día y el sistema compara lo gastado con lo vendido, según la receta de cada plato.
           </p>
           <ul className="mt-10 space-y-4 text-sm text-white/80">
             {[
               [ShoppingBag, 'Ventas por cantidades en segundos'],
-              [ChefHat, 'Cocina: preparaciones, mermas, bajas y conteos'],
+              [ChefHat, 'Hoja del día: inicio, lo que llegó, fin y consumo'],
               [Package, 'Faltantes y lista de compras al día'],
               [BarChart3, 'Reportes diarios, semanales y mensuales'],
             ].map(([Icon, t], i) => {

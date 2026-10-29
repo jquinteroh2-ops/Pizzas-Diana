@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { type DB, nowIso, tx, isDemoMode } from '../db.ts';
-import { AppError, bad, conflict, forbidden, int, notFound, str } from '../errors.ts';
+import { bad, conflict, forbidden, int, notFound, str } from '../errors.ts';
 import { localDate, isYmd } from '../../shared/dates.ts';
 import type { BaseUnit, Unit } from '../../shared/units.ts';
 import { applyMovement } from './inventory.ts';
@@ -107,11 +107,9 @@ export function registerSale(db: DB, user: User, body: Record<string, unknown>, 
       return { sale: getSale(db, user, prev.id), duplicate: true };
     }
 
+    // La caja nunca se queda sin poder vender: si el sistema cree que no alcanza, descuenta lo que
+    // hay y la diferencia se ve en la hoja del día (la cocina cuenta lo que de verdad quedó).
     const plan = buildPlan(db, items);
-    const shortages = plan.requirements.filter((r) => r.short_m > 0);
-    if (shortages.length) {
-      throw new AppError(409, 'No hay existencias suficientes para esta venta.', { shortages });
-    }
 
     const id = randomUUID();
     const at = opts.at ?? nowIso();
@@ -134,14 +132,16 @@ export function registerSale(db: DB, user: User, body: Record<string, unknown>, 
 
     const ref = id.slice(0, 8).toUpperCase();
     for (const r of plan.requirements) {
-      applyMovement(db, { itemId: r.item_id, delta: -r.needed_m, type: 'venta', reason: `Venta #${ref}`, userId: user.id, saleId: id, at, isDemo: !!demo });
+      const take = Math.min(r.needed_m, r.available_m);
+      if (take <= 0) continue;
+      applyMovement(db, { itemId: r.item_id, delta: -take, type: 'venta', reason: `Venta #${ref}`, userId: user.id, saleId: id, at, isDemo: !!demo });
     }
     return { sale: getSale(db, user, id), duplicate: false };
   });
 }
 
 /**
- * Anula una venta: devuelve al inventario lo que se descontó (con movimientos
+ * Anula una venta: devuelve al inventario exactamente lo que se descontó (con movimientos
  * compensatorios) y conserva el registro original marcado como anulado.
  */
 export function annulSale(db: DB, user: User, id: string, body: Record<string, unknown>, opts: { at?: string } = {}) {
@@ -152,7 +152,7 @@ export function annulSale(db: DB, user: User, id: string, body: Record<string, u
     if (s.status === 'anulada') throw conflict('Esta venta ya fue anulada.');
     const at = opts.at ?? nowIso();
     const totals = db
-      .prepare('SELECT item_id, SUM(total_m) total FROM sale_consumption WHERE sale_id = ? GROUP BY item_id')
+      .prepare("SELECT item_id, -SUM(delta_m) total FROM movements WHERE sale_id = ? AND type = 'venta' GROUP BY item_id")
       .all(id) as { item_id: number; total: number }[];
     const ref = id.slice(0, 8).toUpperCase();
     for (const t of totals) {

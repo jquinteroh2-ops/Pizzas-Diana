@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { Search, Pizza, CupSoda, Minus, Plus, ShoppingBag, Trash2, Loader2, CheckCircle2, AlertTriangle, X, ArrowRight } from 'lucide-react';
-import { api, ApiError, newRequestId } from '../lib/api';
+import { api, newRequestId } from '../lib/api';
 import { navigate, useApi, useApp } from '../lib/app';
 import type { Product, Requirement, Sale, SalePreview } from '../lib/types';
 import { useToast } from '../components/toast';
@@ -78,11 +78,6 @@ export default function NewSale() {
       reset();
       bump();
     } catch (e) {
-      if (e instanceof ApiError && e.status === 409 && e.details) {
-        // El inventario cambió mientras se revisaba: se muestra de nuevo qué falta.
-        const shortages = (e.details as { shortages: Requirement[] }).shortages;
-        setPreview((p) => (p ? { ...p, ok: false, shortages } : p));
-      }
       toast.fail(e, 'La venta no se registró');
     } finally {
       setSaving(false);
@@ -269,14 +264,15 @@ export default function NewSale() {
         open={!!preview}
         onClose={() => !saving && setPreview(null)}
         size="lg"
-        title={preview?.ok ? 'Confirmar venta' : 'Existencias insuficientes'}
-        subtitle={preview?.ok ? 'Revisa los productos y lo que se descontará del inventario.' : 'No se puede registrar la venta hasta reponer lo que falta.'}
+        title="Confirmar venta"
+        subtitle="Revisa los productos y lo que se descontará del inventario."
         footer={
           <>
             <button className="btn-secondary" onClick={() => setPreview(null)} disabled={saving}>
               Volver
             </button>
-            {preview?.ok && (
+            {/* La caja nunca se queda sin poder vender: si el sistema cree que algo no alcanza, solo avisa. */}
+            {preview && (
               <button className="btn-primary" onClick={confirm} disabled={saving}>
                 {saving ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />} Confirmar venta
               </button>
@@ -287,10 +283,10 @@ export default function NewSale() {
         {preview && (
           <div className="space-y-5">
             {!preview.ok && (
-              <div className="flex items-start gap-3 rounded-2xl bg-brand-50 p-4 text-sm text-brand-900">
-                <AlertTriangle className="mt-0.5 size-5 shrink-0 text-brand-700" />
+              <div className="flex items-start gap-3 rounded-2xl bg-amber-50 p-4 text-sm text-amber-900">
+                <AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-700" />
                 <div>
-                  <p className="font-semibold">Faltan ingredientes:</p>
+                  <p className="font-semibold">Según el sistema no alcanza (la venta se puede registrar igual):</p>
                   <ul className="mt-1 list-disc pl-5">
                     {preview.shortages.map((s) => (
                       <li key={s.item_id}>
@@ -298,6 +294,7 @@ export default function NewSale() {
                       </li>
                     ))}
                   </ul>
+                  <p className="mt-1.5 text-xs">La cocina lo revisa al contar en la hoja del día. Si de verdad se acabó, avísale.</p>
                 </div>
               </div>
             )}
@@ -326,12 +323,12 @@ export default function NewSale() {
                   </thead>
                   <tbody className="divide-y divide-cream-200">
                     {preview.requirements.map((r) => (
-                      <tr key={r.item_id} className={r.short_m > 0 ? 'bg-brand-50/60' : undefined}>
+                      <tr key={r.item_id} className={r.short_m > 0 ? 'bg-amber-50/60' : undefined}>
                         <td className="px-4 py-2 font-medium">{r.item_name}</td>
                         <td className="px-4 py-2 text-right font-semibold text-brand-700 tabular-nums">−{qtyText(r, 'needed_m')}</td>
                         <td className="hidden px-4 py-2 text-right text-ink-500 tabular-nums sm:table-cell">{qtyText(r, 'available_m')}</td>
-                        <td className={cx('px-4 py-2 text-right font-semibold tabular-nums', r.short_m > 0 ? 'text-brand-800' : 'text-ink-900')}>
-                          {r.short_m > 0 ? 'Insuficiente' : qtyText(r, 'after_m')}
+                        <td className={cx('px-4 py-2 text-right font-semibold tabular-nums', r.short_m > 0 ? 'text-amber-800' : 'text-ink-900')}>
+                          {r.short_m > 0 ? 'Revisar' : qtyText(r, 'after_m')}
                         </td>
                       </tr>
                     ))}

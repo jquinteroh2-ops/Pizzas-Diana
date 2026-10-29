@@ -588,7 +588,7 @@ export function BajasSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
     setBusy(w.id);
     try {
       await api.post(`/wastes/${w.id}/review`, { decision: 'aprobar' });
-      toast.success('Baja autorizada', `${w.item_name}: se descontó del inventario.`);
+      toast.success('Baja autorizada', `${w.item_name}: quedó autorizada.`);
       bump();
     } catch (e) {
       toast.fail(e);

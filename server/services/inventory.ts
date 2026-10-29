@@ -2,6 +2,7 @@ import { type DB, nowIso, tx, isDemoMode } from '../db.ts';
 import { bad, conflict, notFound, num, oneOf, optStr, str } from '../errors.ts';
 import { baseOf, compatible, isUnit, stockStatus, toMilli, type BaseUnit, type Unit, type StockStatus } from '../../shared/units.ts';
 import { ITEM_KINDS, LOCATIONS, type ItemKind, type Location } from '../../shared/kitchen.ts';
+import { baseChangeFactor } from '../../shared/daySheet.ts';
 import type { User } from './users.ts';
 
 export const CATEGORIES = [
@@ -145,6 +146,47 @@ export function updateItem(db: DB, id: number, body: Record<string, unknown>): I
     'UPDATE items SET name=?, category=?, unit=?, min_m=?, kind=?, location=?, pack_size_m=?, pack_label=?, sort_order=?, updated_at=? WHERE id=?',
   ).run(name, category, unit, min, k.kind, k.location, k.packSize, k.packLabel, k.sortOrder, nowIso(), id);
   return getItem(db, id);
+}
+
+/**
+ * Cambiar la unidad base de un ingrediente (por ejemplo, el chorizo de gramos a unidades).
+ * Todo lo guardado de ese ingrediente (existencia, recetas, preparaciones, historia y hojas)
+ * se convierte con el mismo factor para que las cuentas sigan cuadrando.
+ * perUnit: cuánto pesa (g) o mide (ml) UNA unidad. Entre g y ml se toma 1 ml = 1 g.
+ * Si la unidad es de la misma familia (g ↔ kg) no hace nada: basta con updateItem.
+ */
+export function changeItemBase(db: DB, id: number, unit: Unit, perUnit: unknown): void {
+  const item = getItem(db, id);
+  const to = baseOf(unit);
+  if (to === item.base_unit) return;
+  const needsWeight = item.base_unit === 'unidad' || to === 'unidad';
+  const per = needsWeight ? num(perUnit, `cuánto ${item.base_unit === 'ml' || to === 'ml' ? 'mide' : 'pesa'} una unidad`, { allowZero: false, max: 1e6 }) : 1;
+  const f = baseChangeFactor(item.base_unit, to, per);
+  const small: Unit = to === 'g' ? 'g' : to === 'ml' ? 'ml' : 'unidad';
+  const r = (col: string) => `CAST(ROUND(${col} * ${f}) AS INTEGER)`;
+  // Cantidades que deben seguir siendo mayores que cero (recetas y bajas) no pueden quedar en 0.
+  const rPos = (col: string) => `MAX(1, ${r(col)})`;
+  tx(db, () => {
+    db.prepare(`UPDATE items SET base_unit=?, unit=?, qty_m=${r('qty_m')}, min_m=${r('min_m')}, pack_size_m=${r('pack_size_m')}, updated_at=? WHERE id=?`).run(
+      to,
+      unit,
+      nowIso(),
+      id,
+    );
+    db.prepare(`UPDATE recipe_lines SET qty_m=${rPos('qty_m')}, unit=? WHERE item_id=?`).run(small, id);
+    db.prepare(`UPDATE preparation_inputs SET qty_m=${rPos('qty_m')}, unit=? WHERE item_id=?`).run(small, id);
+    db.prepare(`UPDATE preparations SET std_output_m=${rPos('std_output_m')} WHERE output_item_id=?`).run(id);
+    db.prepare(`UPDATE prep_tasks SET target_m=${r('target_m')} WHERE target_m IS NOT NULL AND preparation_id IN (SELECT id FROM preparations WHERE output_item_id=?)`).run(id);
+    db.prepare(`UPDATE movements SET delta_m=${r('delta_m')}, after_m=${r('after_m')} WHERE item_id=?`).run(id);
+    db.prepare(`UPDATE sale_consumption SET per_unit_m=${r('per_unit_m')}, total_m=${r('total_m')}, base_unit=? WHERE item_id=?`).run(to, id);
+    db.prepare(`UPDATE production_inputs SET qty_m=${rPos('qty_m')} WHERE item_id=?`).run(id);
+    db.prepare(
+      `UPDATE productions SET output_m=${rPos('output_m')}, expected_m=${r('expected_m')}, merma_util_m=${r('merma_util_m')}, merma_inutil_m=${r('merma_inutil_m')} WHERE output_item_id=?`,
+    ).run(id);
+    db.prepare(`UPDATE wastes SET qty_m=${rPos('qty_m')}, unit=? WHERE item_id=?`).run(small, id);
+    db.prepare(`UPDATE count_lines SET expected_m=${r('expected_m')}, counted_m=${r('counted_m')} WHERE item_id=?`).run(id);
+    db.prepare(`UPDATE day_sheet_lines SET open_m=${r('open_m')}, close_m=${r('close_m')}, close_sys_m=${r('close_sys_m')}, adj_m=${r('adj_m')} WHERE item_id=?`).run(id);
+  });
 }
 
 export function setItemActive(db: DB, id: number, active: boolean): Item {

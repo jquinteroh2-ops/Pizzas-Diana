@@ -26,13 +26,13 @@ export const CATALOG_ITEMS: CatalogItem[] = [
   { key: 'queso_montanita', name: 'Queso montañita', category: 'Lácteos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 1, demoQty: 2.4 },
   { key: 'chorizo_santacruz', name: 'Chorizo Santa Cruz', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 1, demoQty: 3.385, demoPack: [1000, 'paquete'] },
   { key: 'jamon', name: 'Jamón', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 1.5, demoQty: 4.4, demoPack: [500, 'paquete'] },
-  { key: 'salchicha_manguera', name: 'Salchicha manguera', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 1, demoQty: 2 },
+  { key: 'salchicha_manguera', name: 'Salchicha manguera', category: 'Carnes y embutidos', location: 'Congelador', unit: 'unidad', kind: 'insumo', min: 10, demoQty: 30, demoPack: [10, 'paquete'] },
   { key: 'pepperoni', name: 'Pepperoni', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 1, demoQty: 2.77, demoPack: [500, 'paquete'] },
-  { key: 'chorizo_parrillada', name: 'Chorizo parrillada', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 1, demoQty: 2.24 },
+  { key: 'chorizo_parrillada', name: 'Chorizo parrillada', category: 'Carnes y embutidos', location: 'Congelador', unit: 'unidad', kind: 'insumo', min: 10, demoQty: 32, demoPack: [6, 'paquete'] },
   { key: 'salami', name: 'Salami', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 0.5, demoQty: 1.248 },
-  { key: 'salchicha_zenu', name: 'Salchicha Zenú', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 1, demoQty: 2 },
+  { key: 'salchicha_zenu', name: 'Salchicha Zenú', category: 'Carnes y embutidos', location: 'Congelador', unit: 'unidad', kind: 'insumo', min: 8, demoQty: 24, demoPack: [8, 'paquete'] },
   { key: 'tocineta', name: 'Tocineta', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 0.5, demoQty: 1.172 },
-  { key: 'salchicha_mini', name: 'Salchicha mini', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 0.5, demoQty: 1.4 },
+  { key: 'salchicha_mini', name: 'Salchicha mini', category: 'Carnes y embutidos', location: 'Congelador', unit: 'unidad', kind: 'insumo', min: 10, demoQty: 25, demoPack: [10, 'paquete'] },
   { key: 'maiz', name: 'Maíz tierno', category: 'Verduras y frutas', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 0.5, demoQty: 1.27 },
   { key: 'papas', name: 'Papas a la francesa', category: 'Verduras y frutas', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 3, demoQty: 9 },
   { key: 'pechuga_cruda', name: 'Pechuga cruda', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 2, demoQty: 10.85 },
@@ -42,7 +42,7 @@ export const CATALOG_ITEMS: CatalogItem[] = [
   { key: 'carne_hamb_peq', name: 'Carne de hamburguesa pequeña', category: 'Carnes y embutidos', location: 'Congelador', unit: 'unidad', kind: 'insumo', min: 10, demoQty: 24 },
   { key: 'chorizo_santarrosano', name: 'Chorizo santarrosano', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 0.5, demoQty: 1.5 },
   { key: 'chorizo_espanol', name: 'Chorizo español', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 0.5, demoQty: 1 },
-  { key: 'butifarra', name: 'Butifarra', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 0.5, demoQty: 1.5 },
+  { key: 'butifarra', name: 'Butifarra', category: 'Carnes y embutidos', location: 'Congelador', unit: 'unidad', kind: 'insumo', min: 10, demoQty: 40, demoPack: [20, 'paquete'] },
   { key: 'cabano', name: 'Cábano', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 0.5, demoQty: 1 },
   // ---- Nevera negra (lo que prepara la cocina y las salsas) ----
   { key: 'masa', name: 'Masa de pizza', category: 'Masas y panes', location: 'Nevera negra', unit: 'kg', kind: 'preparacion', min: 3, demoQty: 9.2 },
@@ -281,7 +281,7 @@ const PIZZAS: { key: string; name: string; line: string; description: string; to
   },
   {
     key: 'cartagenera', name: 'Cartagenera', line: 'Exclusive Ndiana', description: 'Mozzarella, chorizo, butifarra, maíz y ajo.', weight: 4,
-    toppings: [['chorizo_santacruz', 60, 'g'], ['butifarra', 60, 'g'], ['maiz', 40, 'g'], ['ajo', 5, 'g']],
+    toppings: [['chorizo_santacruz', 60, 'g'], ['butifarra', 2, 'unidad'], ['maiz', 40, 'g'], ['ajo', 5, 'g']],
   },
   {
     key: 'carnavalera', name: 'Carnavalera', line: 'Exclusive Ndiana', description: 'Mozzarella, jamón, salami, cábano, tomate, cebolla y pimentón finamente picados.', weight: 2,
@@ -344,16 +344,17 @@ const forPeople = (
   category: string,
   description: string,
   base: Line[],
-  sizes: [people: number, factor: number, weight: number][],
+  sizes: [people: number, factor: number, weight: number, units?: Record<string, number>][],
 ): CatalogProduct[] =>
-  sizes.map(([people, factor, weight]) => ({
+  sizes.map(([people, factor, weight, units]) => ({
     key: `${key}_${people}`,
     name: `${name} para ${people}`,
     category,
     type: 'preparado' as const,
     weight,
     description,
-    recipe: scale(base, factor),
+    // Las carnes frías (chorizo, butifarra, salchicha) van por unidades fijas según el tamaño.
+    recipe: scale(base, factor).map(([k, q, u]): Line => (units && k in units ? [k, units[k], 'unidad'] : [k, q, u])),
   }));
 
 const ENSALADA: Line[] = [['lechuga', 30, 'g'], ['tomate', 50, 'g'], ['uchuvas', 20, 'g'], ['vinagreta', 20, 'ml']];
@@ -382,7 +383,7 @@ export const CATALOG_PRODUCTS: CatalogProduct[] = [
     key: 'hamb_paisa', name: 'Hamburguesa Burger paisa', category: 'Hamburguesas', type: 'preparado', weight: 6,
     description: 'Pan brioche, salsa de la casa, cebolla crispi, carne, chorizo, cheddar, tomate, cebolla, lechuga y mozzarella.',
     recipe: [
-      ['pan_hamburguesa', 1, 'unidad'], ['salsa_casa', 25, 'ml'], ['cebolla_crispi', 20, 'g'], ['carne_hamb_gde', 1, 'unidad'], ['chorizo_parrillada', 60, 'g'],
+      ['pan_hamburguesa', 1, 'unidad'], ['salsa_casa', 25, 'ml'], ['cebolla_crispi', 20, 'g'], ['carne_hamb_gde', 1, 'unidad'], ['chorizo_parrillada', 1, 'unidad'],
       ['queso_cheddar', 1, 'unidad'], ['tomate', 40, 'g'], ['cebolla_picada', 20, 'g'], ['lechuga', 20, 'g'], ['queso_mozzarella', 40, 'g'],
     ],
   },
@@ -423,7 +424,7 @@ export const CATALOG_PRODUCTS: CatalogProduct[] = [
     key: 'perro_chorizo_diana', name: 'Perro Chorizo Diana', category: 'Perros', type: 'preparado', weight: 6,
     description: 'Pan brioche, salsa de la casa, chorizo parrillada, lechuga, cebolla caramelizada, cheddar, mozzarella, cebolla crispi y tocineta.',
     recipe: [
-      ['pan_perro', 1, 'unidad'], ['salsa_casa', 25, 'ml'], ['chorizo_parrillada', 120, 'g'], ['lechuga', 15, 'g'], ['cebolla_caramelizada', 30, 'g'],
+      ['pan_perro', 1, 'unidad'], ['salsa_casa', 25, 'ml'], ['chorizo_parrillada', 1, 'unidad'], ['lechuga', 15, 'g'], ['cebolla_caramelizada', 30, 'g'],
       ['queso_cheddar', 1, 'unidad'], ['queso_mozzarella', 40, 'g'], ['cebolla_crispi', 15, 'g'], ['tocineta', 25, 'g'],
     ],
   },
@@ -431,14 +432,14 @@ export const CATALOG_PRODUCTS: CatalogProduct[] = [
     key: 'perro_super', name: 'Perro Super', category: 'Perros', type: 'preparado', weight: 7,
     description: 'Pan brioche, salsa de la casa, salchicha long Zenú, lechuga, cebolla caramelizada, mozzarella y cebolla crispi.',
     recipe: [
-      ['pan_perro', 1, 'unidad'], ['salsa_casa', 25, 'ml'], ['salchicha_zenu', 90, 'g'], ['lechuga', 15, 'g'], ['cebolla_caramelizada', 30, 'g'],
+      ['pan_perro', 1, 'unidad'], ['salsa_casa', 25, 'ml'], ['salchicha_zenu', 1, 'unidad'], ['lechuga', 15, 'g'], ['cebolla_caramelizada', 30, 'g'],
       ['queso_mozzarella', 40, 'g'], ['cebolla_crispi', 15, 'g'],
     ],
   },
   {
     key: 'bambinoperro', name: 'Bambinoperro', category: 'Perros', type: 'preparado', weight: 5,
     description: 'Pan suave, salchicha, tomate, cebolla, lechuga y mozzarella.',
-    recipe: [['pan_suave', 1, 'unidad'], ['salchicha_mini', 50, 'g'], ['tomate', 15, 'g'], ['cebolla_picada', 15, 'g'], ['lechuga', 10, 'g'], ['queso_mozzarella', 25, 'g']],
+    recipe: [['pan_suave', 1, 'unidad'], ['salchicha_mini', 1, 'unidad'], ['tomate', 15, 'g'], ['cebolla_picada', 15, 'g'], ['lechuga', 10, 'g'], ['queso_mozzarella', 25, 'g']],
   },
   // ---- Asados especiales ----
   {
@@ -466,7 +467,7 @@ export const CATALOG_PRODUCTS: CatalogProduct[] = [
     key: 'chori_papa', name: 'Chori papa artesanal', category: 'Picadas', type: 'preparado', weight: 6,
     description: 'Papa francesa, salsa ahumada, chorizo casero salteado con cebollas, mozzarella y maíz.',
     recipe: [
-      ['papas', 300, 'g'], ['salsa_ahumada', 30, 'ml'], ['chorizo_parrillada', 150, 'g'], ['cebolla_picada', 40, 'g'], ['queso_mozzarella', 60, 'g'], ['maiz', 40, 'g'],
+      ['papas', 300, 'g'], ['salsa_ahumada', 30, 'ml'], ['chorizo_parrillada', 2, 'unidad'], ['cebolla_picada', 40, 'g'], ['queso_mozzarella', 60, 'g'], ['maiz', 40, 'g'],
     ],
   },
   ...forPeople(
@@ -474,16 +475,25 @@ export const CATALOG_PRODUCTS: CatalogProduct[] = [
     'Picadita mix',
     'Picadas',
     'Papas, salsa de la casa, lechuga, pollo, chorizo, butifarra y queso (mozzarella o costeño, a elección).',
-    [['papas', 200, 'g'], ['salsa_casa', 25, 'ml'], ['lechuga', 15, 'g'], ['pechuga_plancha', 80, 'g'], ['chorizo_parrillada', 70, 'g'], ['butifarra', 50, 'g'], ['queso_mozzarella', 50, 'g']],
-    [[1, 1, 5], [2, 1.9, 4], [4, 3.2, 2]],
+    [['papas', 200, 'g'], ['salsa_casa', 25, 'ml'], ['lechuga', 15, 'g'], ['pechuga_plancha', 80, 'g'], ['chorizo_parrillada', 1, 'unidad'], ['butifarra', 1, 'unidad'], ['queso_mozzarella', 50, 'g']],
+    // Como dijo el dueño: la de 2 personas lleva 2 butifarras y 1 chorizo; la de 4, 2 chorizos y 2 butifarras (la de 1: por confirmar).
+    [
+      [1, 1, 5, { chorizo_parrillada: 1, butifarra: 1 }],
+      [2, 1.9, 4, { chorizo_parrillada: 1, butifarra: 2 }],
+      [4, 3.2, 2, { chorizo_parrillada: 2, butifarra: 2 }],
+    ],
   ),
   ...forPeople(
     'salchipapa',
     'Salchipapa tradicional',
     'Salchipapas',
     'Papas a la francesa, salsa de la casa, salchicha y mozzarella.',
-    [['papas', 250, 'g'], ['salsa_casa', 30, 'ml'], ['salchicha_manguera', 100, 'g'], ['queso_mozzarella', 50, 'g']],
-    [[1, 1, 10], [2, 1.75, 5]],
+    [['papas', 250, 'g'], ['salsa_casa', 30, 'ml'], ['salchicha_manguera', 1, 'unidad'], ['queso_mozzarella', 50, 'g']],
+    // Para 1 persona, 1 salchicha; para 2, 2 salchichas.
+    [
+      [1, 1, 10, { salchicha_manguera: 1 }],
+      [2, 1.75, 5, { salchicha_manguera: 2 }],
+    ],
   ),
   ...forPeople(
     'picadita_casa',
@@ -491,7 +501,7 @@ export const CATALOG_PRODUCTS: CatalogProduct[] = [
     'Picadas',
     'Papas, salsas de la casa, lechuga, pollo, cerdo, chorizo artesanal salteado con cebolla, maíz y papa ripio.',
     [
-      ['papas', 150, 'g'], ['salsa_casa', 20, 'ml'], ['lechuga', 15, 'g'], ['pechuga_plancha', 70, 'g'], ['cerdo_prep', 70, 'g'], ['chorizo_parrillada', 60, 'g'],
+      ['papas', 150, 'g'], ['salsa_casa', 20, 'ml'], ['lechuga', 15, 'g'], ['pechuga_plancha', 70, 'g'], ['cerdo_prep', 70, 'g'], ['chorizo_parrillada', 0.5, 'unidad'],
       ['cebolla_picada', 20, 'g'], ['maiz', 20, 'g'], ['papa_ripio', 15, 'g'],
     ],
     [[3, 3, 2], [4, 4, 2], [6, 6, 1]],

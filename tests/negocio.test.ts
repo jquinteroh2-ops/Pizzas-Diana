@@ -12,7 +12,6 @@ import * as sales from '../server/services/sales.ts';
 import * as reports from '../server/services/reports.ts';
 import * as users from '../server/services/users.ts';
 import * as demo from '../server/services/demo.ts';
-import { AppError } from '../server/errors.ts';
 import { localDate } from '../shared/dates.ts';
 
 let seq = 0;
@@ -132,24 +131,23 @@ test('6. una bebida descuenta una unidad por cada bebida vendida', () => {
   assert.equal(qty(db, gas.id), 19_000);
 });
 
-test('7. sin existencias suficientes la venta se rechaza y el inventario no cambia', () => {
+test('7. sin existencias suficientes la venta se registra igual: descuenta lo que hay y anular devuelve solo eso', () => {
   const { db, admin } = setup();
   const k = pizzaKit(db, admin);
-  const before = inv.listItems(db).map((i) => i.qty_m);
-  const salesBefore = sales.listSales(db, admin, {}).length;
-  assert.throws(
-    () => sales.registerSale(db, admin, { requestId: rid(), items: [{ productId: k.pizza.id, qty: 11 }] }),
-    (err: unknown) => {
-      assert.ok(err instanceof AppError);
-      assert.equal(err.status, 409);
-      const names = (err.details as { shortages: { item_name: string }[] }).shortages.map((s) => s.item_name);
-      assert.deepEqual(names.sort(), ['Caja', 'Masa', 'Queso']);
-      return true;
-    },
-  );
-  assert.deepEqual(inv.listItems(db).map((i) => i.qty_m), before);
-  assert.equal(sales.listSales(db, admin, {}).length, salesBefore);
-  assert.equal(inv.listMovements(db, { type: 'venta' }).length, 0);
+  // La vista previa avisa qué no alcanza, pero la caja puede vender igual.
+  const pre = sales.previewSale(db, { items: [{ productId: k.pizza.id, qty: 11 }] });
+  assert.equal(pre.ok, false);
+  assert.deepEqual(pre.shortages.map((s) => s.item_name).sort(), ['Caja', 'Masa', 'Queso']);
+  const masaAntes = qty(db, k.masa.id);
+  const { sale } = sales.registerSale(db, admin, { requestId: rid(), items: [{ productId: k.pizza.id, qty: 11 }] });
+  // Lo que no alcanzaba quedó en cero (nunca negativo).
+  assert.equal(qty(db, k.masa.id), 0);
+  // La receta completa queda registrada: es lo que se compara en la hoja del día.
+  const full = sales.getSale(db, admin, sale.id).consumption.find((c) => c.item_id === k.masa.id)!;
+  assert.ok(full.total_m > masaAntes);
+  // Anular devuelve exactamente lo que se descontó, no más.
+  sales.annulSale(db, admin, sale.id, { reason: 'Prueba de anulación' });
+  assert.equal(qty(db, k.masa.id), masaAntes);
 });
 
 test('7b. una petición repetida (doble clic) no descuenta dos veces', () => {

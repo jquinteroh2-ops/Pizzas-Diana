@@ -139,14 +139,15 @@ test('14. receta por lote: la masa escala según la harina y compara contra el r
   );
 });
 
-test('15. bajas: pendiente no descuenta, aprobada descuenta, rechazada no', () => {
+test('15. bajas: se descuentan al reportarlas, el administrador las autoriza y si las rechaza se devuelven', () => {
   const { db, admin, cook } = setup();
   const tomate = inv.createItem(db, admin, { name: 'Tomate', category: 'Verduras y frutas', unit: 'kg', qty: 2, min: 0.5 });
   const photo = 'data:image/jpeg;base64,' + 'A'.repeat(200);
   const w1 = wastes.reportWaste(db, cook, { item_id: tomate.id, qty: 100, unit: 'g', reason: 'danado', note: 'Poca rotación y moho', photo });
   assert.equal(w1.status, 'pendiente');
   assert.equal(w1.has_photo, true);
-  assert.equal(qty(db, tomate.id), 2_000_000);
+  // El tomate ya salió de la nevera: se descuenta aunque falte la autorización.
+  assert.equal(qty(db, tomate.id), 1_900_000);
   // La caja solo vería las suyas; la cocina y el administrador, todas.
   assert.equal(wastes.listWastes(db, cook, {}).length, 1);
   assert.equal(wastes.getWastePhoto(db, admin, w1.id).photo, photo);
@@ -157,7 +158,9 @@ test('15. bajas: pendiente no descuenta, aprobada descuenta, rechazada no', () =
 
   const w2 = wastes.reportWaste(db, cook, { item_id: tomate.id, qty: 0.3, unit: 'kg', reason: 'vencido' });
   assert.throws(() => wastes.reviewWaste(db, admin, w2.id, { decision: 'rechazar' }), /Explica/);
+  assert.equal(qty(db, tomate.id), 1_600_000);
   wastes.reviewWaste(db, admin, w2.id, { decision: 'rechazar', note: 'Ese tomate sí sirve' });
+  // Rechazada: vuelve al inventario.
   assert.equal(qty(db, tomate.id), 1_900_000);
 
   // La baja del administrador queda aprobada de una vez.
@@ -322,7 +325,7 @@ test('21. migración: una base de la versión anterior conserva sus datos y «em
     old.close();
 
     const db = openDb(path);
-    assert.equal((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version, 2);
+    assert.equal((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version, 3);
     const rafa = users.getUser(db, 2);
     assert.equal(rafa.role, 'caja');
     assert.deepEqual(rafa.perms, ['entradas']);
