@@ -18,11 +18,11 @@ import { parseQty, smallUnit, validQty } from './helpers';
 
 // ---------- Piezas con el estilo de la hoja de papel ----------
 
-const TH = 'border border-ink-900 bg-[#d9d9d9] px-2 py-1.5 text-center text-[11px] font-extrabold tracking-wide text-ink-900 uppercase';
-const TD = 'border border-ink-700/60 px-2 py-1.5 text-[13px] text-ink-900';
-const SECTION = 'border border-ink-900 bg-[#8c8c8c] px-2 py-1 text-center text-[12px] font-extrabold tracking-wider text-white uppercase';
+export const TH = 'border border-ink-900 bg-[#d9d9d9] px-2 py-1.5 text-center text-[11px] font-extrabold tracking-wide text-ink-900 uppercase';
+export const TD = 'border border-ink-700/60 px-2 py-1.5 text-[13px] text-ink-900';
+export const SECTION = 'border border-ink-900 bg-[#8c8c8c] px-2 py-1 text-center text-[12px] font-extrabold tracking-wider text-white uppercase';
 
-function Paper({ title, subtitle, nav, actions, note, children }: { title: string; subtitle: string; nav?: ReactNode; actions?: ReactNode; note?: ReactNode; children: ReactNode }) {
+export function Paper({ title, subtitle, nav, actions, note, children }: { title: string; subtitle: string; nav?: ReactNode; actions?: ReactNode; note?: ReactNode; children: ReactNode }) {
   return (
     <div className="card overflow-hidden print:border-0 print:shadow-none">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-cream-200 px-4 py-3 print:hidden">
@@ -50,7 +50,7 @@ function Paper({ title, subtitle, nav, actions, note, children }: { title: strin
 }
 
 /** Tabla ancha como la hoja de papel: en el celular se desliza de lado, y se avisa. */
-function Wide({ children }: { children: ReactNode }) {
+export function Wide({ children }: { children: ReactNode }) {
   return (
     <div>
       <p className="mb-1 text-right text-[11px] font-semibold text-ink-500 md:hidden print:hidden">Desliza la tabla →</p>

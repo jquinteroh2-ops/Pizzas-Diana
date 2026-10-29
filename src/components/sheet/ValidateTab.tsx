@@ -1,28 +1,29 @@
-// Pestaña «Validar»: la jefa de cocina compara lo que se gastó según la hoja con lo que
-// vendió la caja (según las recetas) y cierra el día. Al validar, el inventario del sistema
-// queda igual a lo que se contó al cerrar.
+// Pestaña «Validar con caja», en formato de hoja: lo que se gastó según la hoja frente a lo
+// que vendió la caja (según las recetas). La jefa de cocina revisa y firma (valida) el día;
+// al validar, el inventario del sistema queda igual a lo que se contó al cerrar.
 import { useState } from 'react';
-import { CheckCircle2, LockOpen, ReceiptText, ShieldCheck, TriangleAlert } from 'lucide-react';
+import { LockOpen, ShieldCheck, TriangleAlert } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useApp } from '../../lib/app';
 import type { DaySheet, DaySheetLine } from '../../../shared/daySheet.ts';
 import { formatDateTime } from '../../../shared/dates.ts';
-import { formatNumber } from '../../../shared/units.ts';
 import { useToast } from '../toast';
-import { ConfirmModal, Segmented, cx } from '../ui';
+import { ConfirmModal, cx } from '../ui';
+import { Paper, TD, TH, Wide } from '../kitchen/Sheets';
 import { qtyText, signedText } from './qty';
 
 type Filter = 'revisar' | 'todo';
 
-function DiffCell({ l }: { l: DaySheetLine }) {
-  if (l.diff_m === null) return <span className="text-ink-400">Falta contar</span>;
-  if (l.diff_level === 'ok') return <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 className="size-4" /> Cuadra</span>;
-  const falta = l.diff_level === 'falta';
-  return (
-    <span className={cx('font-semibold tabular-nums', falta ? 'text-brand-700' : 'text-amber-700')}>
-      {falta ? 'Se gastó ' : 'Sobró '}
-      {signedText(Math.abs(l.diff_m), l).replace('+', '')} {falta ? 'de más' : ''}
-    </span>
+const paperDate = (ymd: string) => `${Number(ymd.slice(8, 10))}.${ymd.slice(5, 7)}.${ymd.slice(2, 4)}`;
+
+function Result({ l }: { l: DaySheetLine }) {
+  if (l.diff_m === null) return <span className="text-ink-500">FALTA EL FIN</span>;
+  if (l.diff_level === 'ok') return <span className="font-bold text-emerald-700">CUADRA</span>;
+  const amount = signedText(Math.abs(l.diff_m), l).replace('+', '');
+  return l.diff_level === 'falta' ? (
+    <span className="font-bold text-brand-700">FALTAN {amount}</span>
+  ) : (
+    <span className="font-bold text-amber-700">SOBRAN {amount}</span>
   );
 }
 
@@ -34,7 +35,7 @@ export function ValidateTab({ sheet, lines, onSheet }: { sheet: DaySheet; lines:
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<'validar' | 'reabrir' | null>(null);
 
-  // Solo lo que se movió ese día: algo contado, algo vendido o algo preparado.
+  // Solo lo que se movió ese día: algo contado o algo vendido.
   const relevant = lines.filter((l) => l.consumption_m !== null || l.sales_m > 0);
   const toReview = relevant.filter((l) => l.diff_level === 'falta' || l.diff_level === 'sobra');
   const missingClose = lines.filter((l) => l.close_m === null && (l.open_m !== null || l.sales_m > 0));
@@ -55,144 +56,136 @@ export function ValidateTab({ sheet, lines, onSheet }: { sheet: DaySheet; lines:
     }
   };
 
+  const tabBtn = (f: Filter, label: string) => (
+    <button onClick={() => setFilter(f)} className={cx('border border-ink-900 px-3 py-1 text-[11px] font-extrabold uppercase', filter === f ? 'bg-ink-900 text-white' : 'bg-[#d9d9d9] text-ink-900')}>
+      {label}
+    </button>
+  );
+
   return (
-    <div className="space-y-5">
-      {sheet.status === 'validada' && (
-        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-          <ShieldCheck className="size-5 shrink-0" />
-          <p className="mr-auto">
-            Validada por <b>{sheet.validated_by_name}</b>
-            {sheet.validated_at && <> · {formatDateTime(sheet.validated_at)}</>}
-            {sheet.note && <span className="block text-emerald-800">«{sheet.note}»</span>}
-          </p>
-          {can('sheet.reopen') && (
-            <button className="btn-secondary btn-sm" onClick={() => setConfirm('reabrir')}>
-              <LockOpen className="size-4" /> Volver a abrir
-            </button>
-          )}
-        </div>
-      )}
-
-      <div className="grid gap-3 sm:grid-cols-3">
-        <div className="card p-4">
-          <p className="text-xs font-semibold text-ink-500 uppercase">La caja vendió</p>
-          <p className="font-display text-2xl font-semibold text-ink-900">{formatNumber(sheet.sold_units)} platos</p>
-        </div>
-        <div className="card p-4">
-          <p className="text-xs font-semibold text-ink-500 uppercase">Contados al cerrar</p>
-          <p className="font-display text-2xl font-semibold text-ink-900">
-            {sheet.summary.close_filled} <span className="text-base text-ink-500">de {sheet.summary.items}</span>
-          </p>
-        </div>
-        <div className={cx('card p-4', toReview.length > 0 && 'border-brand-200 bg-brand-50/40')}>
-          <p className="text-xs font-semibold text-ink-500 uppercase">No cuadran</p>
-          <p className={cx('font-display text-2xl font-semibold', toReview.length ? 'text-brand-700' : 'text-emerald-700')}>{toReview.length}</p>
-        </div>
-      </div>
-
-      <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
-        <section className="card overflow-hidden">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-cream-200 px-4 py-3">
-            <h3 className="font-display text-lg font-semibold">Lo gastado frente a lo vendido</h3>
-            <Segmented
-              size="sm"
-              value={filter}
-              onChange={setFilter}
-              options={[
-                { value: 'revisar', label: `Para revisar (${toReview.length})` },
-                { value: 'todo', label: 'Todo' },
-              ]}
-            />
+    <div className="grid gap-5 lg:grid-cols-[1fr_340px]">
+      <Paper
+        title="Caja vs cocina"
+        subtitle={`Fecha: ${paperDate(sheet.date)} · la caja vendió ${sheet.sold_units} platos`}
+        nav={
+          <div className="flex">
+            {tabBtn('revisar', `No cuadran (${toReview.length})`)}
+            {tabBtn('todo', 'Todo')}
           </div>
-          {shown.length === 0 ? (
-            <p className="px-4 py-10 text-center text-sm text-ink-500">
-              {relevant.length === 0 ? 'Todavía no hay nada para comparar: falta contar el fin o no hubo ventas.' : 'Todo cuadra con lo que vendió la caja.'}
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[560px] text-sm">
-                <thead>
-                  <tr className="border-b border-cream-200 text-left text-[11px] font-bold tracking-wide text-ink-500 uppercase">
-                    <th className="px-4 py-2">Ingrediente</th>
-                    <th className="px-2 py-2 text-right">Se gastó (hoja)</th>
-                    <th className="px-2 py-2 text-right">Según ventas</th>
-                    <th className="px-4 py-2 text-right">Resultado</th>
+        }
+        note="Se aceptan diferencias pequeñas (5 %, o 20 g / media unidad): las porciones nunca son exactas"
+      >
+        <Wide>
+          <table className="w-full min-w-[520px] border-collapse">
+            <thead>
+              <tr>
+                <th className={cx(TH, 'w-[34%]')}>Producto</th>
+                <th className={TH}>Se gastó (hoja)</th>
+                <th className={TH}>Según ventas</th>
+                <th className={cx(TH, 'bg-ink-900 text-white')}>Resultado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shown.length === 0 && (
+                <tr>
+                  <td colSpan={4} className={cx(TD, 'py-6 text-center text-ink-500')}>
+                    {relevant.length === 0 ? 'Todavía no hay nada para comparar: falta llenar el fin o no hubo ventas.' : 'Todo cuadra con lo que vendió la caja.'}
+                  </td>
+                </tr>
+              )}
+              {shown.map((l) => (
+                <tr key={l.item_id}>
+                  <td className={TD}>
+                    <span className="font-semibold">{l.name}</span>
+                    <span className="block text-[10.5px] text-ink-500">{l.location}</span>
+                  </td>
+                  <td className={cx(TD, 'text-center font-semibold text-[#1f3f8f] tabular-nums')}>{l.consumption_m === null ? '' : qtyText(Math.max(0, l.consumption_m), l) || '0'}</td>
+                  <td className={cx(TD, 'text-center tabular-nums')}>{qtyText(l.sales_m, l) || '0'}</td>
+                  <td className={cx(TD, 'text-center text-[12px]')}>
+                    <Result l={l} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Wide>
+      </Paper>
+
+      <div className="space-y-5">
+        <Paper title="Ventas de caja" subtitle={`${sheet.sold_units} platos`}>
+          <div className="max-h-80 overflow-y-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr>
+                  <th className={TH}>Producto</th>
+                  <th className={cx(TH, 'w-16')}>Cant.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sheet.sold.length === 0 && (
+                  <tr>
+                    <td colSpan={2} className={cx(TD, 'py-5 text-center text-ink-500')}>
+                      Sin ventas este día.
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {shown.map((l) => (
-                    <tr key={l.item_id} className="border-b border-cream-200/70 last:border-0">
-                      <td className="px-4 py-2 font-semibold text-ink-900">
-                        {l.name}
-                        <span className="block text-[11px] font-normal text-ink-500">{l.location}</span>
-                      </td>
-                      <td className="px-2 py-2 text-right tabular-nums">{l.consumption_m === null ? '—' : qtyText(Math.max(0, l.consumption_m), l) || '0'}</td>
-                      <td className="px-2 py-2 text-right tabular-nums">{qtyText(l.sales_m, l) || '0'}</td>
-                      <td className="px-4 py-2 text-right">
-                        <DiffCell l={l} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          <p className="border-t border-cream-200 px-4 py-2.5 text-[11px] text-ink-500">
-            Se aceptan diferencias pequeñas (5 %, o 20 g / media unidad): las porciones nunca son exactas.
-          </p>
-        </section>
-
-        <div className="space-y-5">
-          <section className="card overflow-hidden">
-            <h3 className="flex items-center gap-2 border-b border-cream-200 px-4 py-3 font-display text-lg font-semibold">
-              <ReceiptText className="size-5 text-ink-500" /> Lo que vendió la caja
-            </h3>
-            {sheet.sold.length === 0 ? (
-              <p className="px-4 py-6 text-center text-sm text-ink-500">No hay ventas registradas este día.</p>
-            ) : (
-              <ul className="max-h-80 divide-y divide-cream-200 overflow-y-auto text-sm">
+                )}
                 {sheet.sold.map((p) => (
-                  <li key={p.product_id} className="flex justify-between gap-3 px-4 py-2">
-                    <span className="text-ink-700">{p.product_name}</span>
-                    <span className="font-semibold tabular-nums">{p.qty}</span>
-                  </li>
+                  <tr key={p.product_id}>
+                    <td className={TD}>{p.product_name}</td>
+                    <td className={cx(TD, 'text-center font-bold tabular-nums')}>{p.qty}</td>
+                  </tr>
                 ))}
-              </ul>
-            )}
-          </section>
+              </tbody>
+            </table>
+          </div>
+        </Paper>
 
-          {sheet.editable && (
-            <section className="card space-y-3 p-4">
-              <h3 className="font-display text-lg font-semibold">Validar el día</h3>
+        {/* La firma de la hoja */}
+        <div className="border-2 border-ink-900 bg-white p-4">
+          <p className="text-[11px] font-extrabold tracking-wider text-ink-900 uppercase">Revisado y validado por</p>
+          {sheet.status === 'validada' ? (
+            <>
+              <p className="mt-2 flex items-center gap-2 border-b border-ink-900 pb-1 text-lg font-semibold text-[#1f3f8f]">
+                <ShieldCheck className="size-5 text-emerald-700" /> {sheet.validated_by_name}
+              </p>
+              {sheet.validated_at && <p className="mt-1 text-xs text-ink-500">{formatDateTime(sheet.validated_at)}</p>}
+              {sheet.note && <p className="mt-2 text-sm text-ink-700">«{sheet.note}»</p>}
+              {can('sheet.reopen') && (
+                <button className="btn-secondary btn-sm mt-3" onClick={() => setConfirm('reabrir')}>
+                  <LockOpen className="size-4" /> Volver a abrir
+                </button>
+              )}
+            </>
+          ) : (
+            <div className="mt-3 space-y-3">
               {missingClose.length > 0 && (
-                <p className="flex gap-2 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <p className="flex gap-2 border border-amber-400 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                   <TriangleAlert className="size-4 shrink-0" />
-                  Faltan {missingClose.length} ingredientes por contar al cerrar. Los que no se cuenten quedan como dice el sistema.
+                  Faltan {missingClose.length} productos por llenar en el fin. Los que no se llenen quedan como dice el sistema.
                 </p>
               )}
               <label className="block">
-                <span className="label">Nota (opcional)</span>
-                <textarea className="input min-h-20" value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} placeholder="Ej.: el queso se gastó de más porque hubo un pedido grande." />
+                <span className="text-xs font-bold text-ink-700 uppercase">Observaciones</span>
+                <textarea
+                  className="mt-1 min-h-20 w-full border border-ink-400 px-3 py-2 text-sm focus:border-ink-900 focus:outline-none"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  maxLength={500}
+                  placeholder="Ej.: el queso se gastó de más porque hubo un pedido grande."
+                />
               </label>
               <button className="btn w-full bg-ink-900 py-3 text-white hover:bg-ink-700" onClick={() => setConfirm('validar')} disabled={sheet.summary.close_filled === 0}>
                 <ShieldCheck className="size-5" /> Validar el día
               </button>
-              {sheet.summary.close_filled === 0 && <p className="text-xs text-ink-500">Primero escribe el Fin en la pestaña Inventario.</p>}
-            </section>
+              {sheet.summary.close_filled === 0 && <p className="text-xs text-ink-500">Primero llene el fin en la hoja de inventario.</p>}
+            </div>
           )}
         </div>
       </div>
 
-      <ConfirmModal
-        open={confirm === 'validar'}
-        onClose={() => setConfirm(null)}
-        onConfirm={() => void run('validar')}
-        title="¿Validar el día?"
-        confirmText="Sí, validar"
-        busy={busy}
-      >
-        El inventario del sistema quedará igual a lo que se contó al cerrar ({sheet.summary.close_filled} ingredientes). Después solo el administrador puede volver a abrir la hoja.
-        {toReview.length > 0 && <p className="mt-2 font-semibold text-brand-700">Hay {toReview.length} ingredientes que no cuadran con la caja.</p>}
+      <ConfirmModal open={confirm === 'validar'} onClose={() => setConfirm(null)} onConfirm={() => void run('validar')} title="¿Validar el día?" confirmText="Sí, validar" busy={busy}>
+        El inventario del sistema quedará igual a lo que se contó al cerrar ({sheet.summary.close_filled} productos). Después solo el administrador puede volver a abrir la hoja.
+        {toReview.length > 0 && <p className="mt-2 font-semibold text-brand-700">Hay {toReview.length} productos que no cuadran con la caja.</p>}
       </ConfirmModal>
       <ConfirmModal open={confirm === 'reabrir'} onClose={() => setConfirm(null)} onConfirm={() => void run('reabrir')} title="¿Volver a abrir la hoja?" confirmText="Abrir" busy={busy}>
         Se deshacen los ajustes que hizo la validación y la cocina podrá corregir la hoja. Después hay que validarla otra vez.

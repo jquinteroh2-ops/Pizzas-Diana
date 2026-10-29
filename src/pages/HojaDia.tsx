@@ -152,7 +152,7 @@ export default function HojaDia() {
             </p>
           )}
           {tab === 'inventario' && <InventoryTab sheet={live} lines={lines} onLine={onLine} onSheet={onSheet} />}
-          {tab === 'preparaciones' && <PrepTab date={date} onFlow={setFlow} editable={live.editable && date === today} />}
+          {tab === 'preparaciones' && <PrepTab onFlow={setFlow} editable={live.editable && date === today} />}
           {tab === 'bajas' && <BajasSheet onFlow={setFlow} />}
           {tab === 'pedido' && <OrderTab onFlow={setFlow} />}
           {tab === 'validar' && <ValidateTab sheet={live} lines={lines} onSheet={onSheet} />}

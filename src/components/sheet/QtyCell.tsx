@@ -26,6 +26,7 @@ export function QtyCell({
   label,
   disabled,
   big,
+  paper,
   onSave,
 }: {
   value: number | null;
@@ -37,6 +38,8 @@ export function QtyCell({
   disabled?: boolean;
   /** Casillas más grandes (celular). */
   big?: boolean;
+  /** Como escrito a mano en la hoja: sin recuadro y en tinta azul. */
+  paper?: boolean;
   onSave: (milli: number | null) => Promise<void>;
 }) {
   const [draft, setDraft] = useState<Draft>(() => toDraft(value, measure));
@@ -113,11 +116,18 @@ export function QtyCell({
     if (status === 'error') setStatus('idle');
   };
 
-  const input = cx(
-    'rounded-lg border bg-white text-center tabular-nums text-ink-900 placeholder:text-ink-400/70 focus:border-ink-900 focus:ring-2 focus:ring-ink-900/10 focus:outline-none disabled:border-transparent disabled:bg-transparent disabled:text-ink-700',
-    big ? 'h-11 text-base' : 'h-9 text-sm',
-    status === 'error' ? 'border-brand-600' : 'border-cream-300',
-  );
+  const input = paper
+    ? cx(
+        // Hoja de papel: la casilla no se nota hasta que se toca; lo escrito queda en «tinta» azul.
+        'rounded border border-dashed bg-transparent text-center font-semibold tabular-nums text-[#1f3f8f] placeholder:text-ink-400/40 hover:border-ink-400 focus:border-solid focus:border-ink-900 focus:bg-amber-50 focus:outline-none disabled:border-transparent disabled:text-ink-700',
+        big ? 'h-10 text-[17px]' : 'h-8 text-[15px]',
+        status === 'error' ? 'border-brand-600 bg-brand-50' : 'border-ink-400/30',
+      )
+    : cx(
+        'rounded-lg border bg-white text-center tabular-nums text-ink-900 placeholder:text-ink-400/70 focus:border-ink-900 focus:ring-2 focus:ring-ink-900/10 focus:outline-none disabled:border-transparent disabled:bg-transparent disabled:text-ink-700',
+        big ? 'h-11 text-base' : 'h-9 text-sm',
+        status === 'error' ? 'border-brand-600' : 'border-cream-300',
+      );
   const hasPack = measure.pack_size_m > 0;
   const lu = unitShort(looseUnit(measure));
 
@@ -128,11 +138,11 @@ export function QtyCell({
           <input
             data-col={col}
             data-first
-            className={cx(input, big ? 'w-14' : 'w-11')}
+            className={cx(input, paper ? (big ? 'w-11' : 'w-10') : big ? 'w-14' : 'w-11')}
             inputMode="decimal"
             enterKeyHint="next"
             value={draft.packs}
-            placeholder="0"
+            placeholder={paper ? '' : '0'}
             disabled={disabled}
             aria-label={`${label}: ${packWord(measure.pack_label)}`}
             onFocus={(e) => {
@@ -149,11 +159,11 @@ export function QtyCell({
       <input
         data-col={col}
         data-first={hasPack ? undefined : true}
-        className={cx(input, big ? 'w-20' : 'w-16')}
+        className={cx(input, paper ? 'w-14' : big ? 'w-20' : 'w-16')}
         inputMode="decimal"
         enterKeyHint="next"
         value={draft.loose}
-        placeholder={hasPack ? '0' : '—'}
+        placeholder={paper ? '' : hasPack ? '0' : '—'}
         disabled={disabled}
         aria-label={`${label}: ${lu}`}
         onFocus={(e) => {

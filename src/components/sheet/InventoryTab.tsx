@@ -1,23 +1,39 @@
-// Pestaña «Inventario» de la hoja del día: la hoja de papel en la pantalla.
-// En el computador se ven y se llenan todas las columnas; en el celular se elige qué se
-// está anotando (Inicio, Llegó o Fin) y cada ingrediente queda como un renglón grande.
-import { useMemo, useState, type ReactNode } from 'react';
-import { ChevronDown, Copy, Pencil, Plus, Printer, Search, Server } from 'lucide-react';
+// Pestaña «Inventario» de la hoja del día: la misma hoja de papel de la cocina.
+//   PRODUCTO | INIC · PAQUETE + USO | ENTRADA | FIN · PAQUETE + USO | CONSUMO
+// con una franja gris por nevera. Lo escrito queda en «tinta» azul y se guarda solo.
+// En el celular se elige qué columna se está llenando (no caben las tres).
+import { useEffect, useMemo, useState } from 'react';
+import { Copy, Pencil, Plus, Search, Server } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { DaySheet, DaySheetLine, SheetField } from '../../../shared/daySheet.ts';
 import { LOCATIONS, type Location } from '../../../shared/kitchen.ts';
 import { useToast } from '../toast';
-import { Segmented, cx } from '../ui';
-import { LOCATION_ICONS } from '../kitchen/helpers';
+import { cx } from '../ui';
+import { Paper, SECTION, TD, TH } from '../kitchen/Sheets';
 import { QtyCell } from './QtyCell';
 import { IngredientModal, type IngredientBase } from './IngredientModal';
 import { packDescription, qtyText, signedText } from './qty';
 
-const COLUMN_HELP: Record<SheetField, string> = {
-  open: 'Al abrir: lo que hay en cada nevera.',
-  entry: 'Lo que llegó hoy del proveedor. Se suma al inventario de una vez.',
-  close: 'Al cerrar: lo que quedó. El consumo se calcula solo.',
+const COLUMN: Record<SheetField, { head: string; sub: string; help: string }> = {
+  open: { head: 'Inic', sub: 'paquete + uso', help: 'Al abrir: lo que hay en cada nevera.' },
+  entry: { head: 'Entrada', sub: 'lo que llegó', help: 'Lo que llegó hoy del proveedor. Entra al inventario de una vez.' },
+  close: { head: 'Fin', sub: 'paquete + uso', help: 'Al cerrar: lo que quedó. El consumo se calcula solo.' },
 };
+
+/** Como se escribe en la hoja: «12.10.26». */
+const paperDate = (ymd: string) => `${Number(ymd.slice(8, 10))}.${ymd.slice(5, 7)}.${ymd.slice(2, 4)}`;
+
+function useWide() {
+  const q = '(min-width: 768px)';
+  const [wide, setWide] = useState(() => typeof window === 'undefined' || window.matchMedia(q).matches);
+  useEffect(() => {
+    const m = window.matchMedia(q);
+    const on = () => setWide(m.matches);
+    m.addEventListener('change', on);
+    return () => m.removeEventListener('change', on);
+  }, []);
+  return wide;
+}
 
 function defaultColumn(sheet: DaySheet): SheetField {
   const { items, open_filled, close_filled } = sheet.summary;
@@ -25,19 +41,13 @@ function defaultColumn(sheet: DaySheet): SheetField {
   return open_filled >= Math.ceil(items * 0.6) ? 'close' : 'open';
 }
 
-/** Lo que pasó con el ingrediente en el día, en una línea corta. */
-function Moves({ l, className }: { l: DaySheetLine; className?: string }) {
-  const parts: ReactNode[] = [];
-  if (l.produced_m) parts.push(<span key="p">Preparado {signedText(l.produced_m, l)}</span>);
-  if (l.used_m) parts.push(<span key="u">En preparaciones {signedText(-l.used_m, l)}</span>);
-  if (l.waste_m) parts.push(<span key="w">Bajas {signedText(-l.waste_m, l)}</span>);
-  if (!parts.length) return null;
-  return <span className={cx('flex flex-wrap gap-x-3 gap-y-0.5', className)}>{parts}</span>;
-}
-
-function Consumption({ l }: { l: DaySheetLine }) {
-  if (l.consumption_m === null) return <span className="text-ink-400">—</span>;
-  return <span className={cx('font-semibold tabular-nums', l.consumption_m < 0 ? 'text-amber-700' : 'text-ink-900')}>{qtyText(Math.abs(l.consumption_m), l) || '0'}{l.consumption_m < 0 ? ' de más' : ''}</span>;
+/** Lo preparado, lo usado en preparaciones y las bajas: una nota pequeña bajo el producto. */
+function moveNote(l: DaySheetLine): string {
+  const parts: string[] = [];
+  if (l.produced_m) parts.push(`preparado ${signedText(l.produced_m, l)}`);
+  if (l.used_m) parts.push(`en preparaciones ${signedText(-l.used_m, l)}`);
+  if (l.waste_m) parts.push(`bajas ${signedText(-l.waste_m, l)}`);
+  return parts.join(' · ');
 }
 
 export function InventoryTab({
@@ -52,12 +62,13 @@ export function InventoryTab({
   onSheet: (s: DaySheet) => void;
 }) {
   const toast = useToast();
+  const wide = useWide();
   const [col, setCol] = useState<SheetField>(() => defaultColumn(sheet));
   const [q, setQ] = useState('');
-  const [closed, setClosed] = useState<Set<Location>>(new Set());
   const [modal, setModal] = useState<{ ingredient?: IngredientBase; location?: Location } | null>(null);
   const [busy, setBusy] = useState(false);
   const editable = sheet.editable;
+  const cols: SheetField[] = wide ? ['open', 'entry', 'close'] : [col];
 
   const save = (l: DaySheetLine, field: SheetField) => async (milli: number | null) => {
     try {
@@ -75,7 +86,7 @@ export function InventoryTab({
       const s = await api.post<DaySheet>('/day-sheet/fill-open', { date: sheet.date, source });
       onSheet(s);
       const n = s.summary.open_filled - sheet.summary.open_filled;
-      toast.success('Inicio llenado', `${n} ingrediente${n === 1 ? '' : 's'}. Revisa y corrige lo que no coincida.`);
+      toast.success('Inicio llenado', `${n} producto${n === 1 ? '' : 's'}. Revisa y corrige lo que no coincida.`);
     } catch (e) {
       toast.fail(e);
     } finally {
@@ -92,217 +103,194 @@ export function InventoryTab({
   const missingOpen = lines.filter((l) => l.open_m === null);
   const canCopy = editable && missingOpen.some((l) => l.prev_close_m !== null);
   const s = sheet.summary;
-  const toggle = (loc: Location) =>
-    setClosed((c) => {
-      const n = new Set(c);
-      if (n.has(loc)) n.delete(loc);
-      else n.add(loc);
-      return n;
-    });
 
-  const cell = (l: DaySheetLine, field: SheetField, big?: boolean) => {
+  const cell = (l: DaySheetLine, field: SheetField) => {
     const value = field === 'open' ? l.open_m : field === 'close' ? l.close_m : l.entries_m || null;
     const can = field === 'entry' ? sheet.entries_editable : editable;
-    if (!can) return <span className="tabular-nums text-ink-700">{qtyText(value, l) || <span className="text-ink-400">—</span>}</span>;
-    return <QtyCell value={value} measure={l} col={field} label={`${l.name}: ${field === 'open' ? 'inicio' : field === 'close' ? 'fin' : 'llegó'}`} big={big} onSave={save(l, field)} />;
+    if (!can) return <span className="font-semibold text-[#1f3f8f] tabular-nums">{qtyText(value, l)}</span>;
+    return (
+      <QtyCell
+        paper
+        big={!wide}
+        value={value}
+        measure={l}
+        col={field}
+        label={`${l.name}: ${field === 'open' ? 'inicio' : field === 'close' ? 'fin' : 'entrada'}`}
+        onSave={save(l, field)}
+      />
+    );
   };
 
-  const editButton = (l: DaySheetLine) =>
-    editable && (
-      <button
-        className="rounded-md p-1 text-ink-400 hover:bg-cream-200 hover:text-ink-900 print:hidden"
-        onClick={() => setModal({ ingredient: l })}
-        aria-label={`Editar ${l.name}`}
-        title="Cambiar unidad, paquete o lugar"
-      >
-        <Pencil className="size-3.5" />
-      </button>
-    );
+  // En el celular no cabe la columna de consumo: va debajo de la casilla.
+  const nCols = (wide ? 2 : 1) + cols.length;
 
   return (
     <div>
-      {/* Barra de herramientas */}
-      <div className="mb-4 flex flex-col gap-3 print:hidden">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative min-w-0 flex-1 sm:max-w-xs">
-            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-400" />
-            <input className="input pl-9" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar ingrediente" aria-label="Buscar ingrediente" />
+      <Paper
+        title="Inventario diario"
+        subtitle={`Fecha: ${paperDate(sheet.date)}`}
+        nav={
+          <div className="relative w-56 max-w-full">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-ink-400" />
+            <input className="input py-1.5 pl-8 text-sm" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar producto" aria-label="Buscar producto" />
           </div>
-          {editable && (
-            <button className="btn-secondary" onClick={() => setModal({})}>
-              <Plus className="size-4" /> Agregar ingrediente
-            </button>
-          )}
-          <button className="btn-ghost hidden md:inline-flex" onClick={() => window.print()}>
-            <Printer className="size-4" /> Imprimir
-          </button>
-        </div>
-
-        {/* En el celular: qué se está anotando */}
-        <div className="md:hidden">
-          <Segmented
-            value={col}
-            onChange={setCol}
-            options={[
-              { value: 'open', label: `Inicio ${s.open_filled}/${s.items}` },
-              { value: 'entry', label: 'Llegó' },
-              { value: 'close', label: `Fin ${s.close_filled}/${s.items}` },
-            ]}
-          />
-          <p className="mt-1.5 text-xs text-ink-500">{COLUMN_HELP[col]}</p>
-        </div>
-        <p className="hidden text-xs text-ink-500 md:block">
-          Escribe en las casillas y se guarda solo. <b>Enter</b> baja a la siguiente. Con paquete se escribe como en el papel: paquetes cerrados + lo que queda del abierto.
-          {!sheet.entries_editable && editable && ' «Llegó» solo se anota el mismo día.'}
-        </p>
-
-        {editable && missingOpen.length > 0 && (
-          // En el celular solo se ve mientras se anota el inicio.
-          <div className={cx('flex flex-wrap items-center gap-2 rounded-2xl border border-cream-300 bg-white px-4 py-3', col !== 'open' && 'hidden md:flex')}>
-            <p className="mr-auto text-sm text-ink-700">
-              Faltan <b>{missingOpen.length}</b> por escribir en el inicio.
-            </p>
-            {canCopy && (
-              <button className="btn-secondary btn-sm" disabled={busy} onClick={() => void fill('ayer')}>
-                <Copy className="size-4" /> Copiar el fin de ayer
+        }
+        actions={
+          editable && (
+            <>
+              {missingOpen.length > 0 && canCopy && (
+                <button className="btn-secondary btn-sm" disabled={busy} onClick={() => void fill('ayer')} title="El inicio de hoy es lo que quedó al cerrar ayer">
+                  <Copy className="size-4" /> Copiar el fin de ayer
+                </button>
+              )}
+              {missingOpen.length > 0 && (
+                <button className="btn-ghost btn-sm" disabled={busy} onClick={() => void fill('sistema')} title="Llena el inicio que falta con lo que lleva el sistema">
+                  <Server className="size-4" /> Inicio según el sistema
+                </button>
+              )}
+              <button className="btn-secondary btn-sm" onClick={() => setModal({})}>
+                <Plus className="size-4" /> Agregar producto
               </button>
-            )}
-            <button className="btn-ghost btn-sm" disabled={busy} onClick={() => void fill('sistema')} title="Llena el inicio con lo que lleva el sistema">
-              <Server className="size-4" /> Usar lo del sistema
-            </button>
+            </>
+          )
+        }
+        note={
+          <>
+            Inic {s.open_filled}/{s.items} · Fin {s.close_filled}/{s.items}
+          </>
+        }
+      >
+        {/* Celular: qué columna se llena (como pasar la hoja de una columna a otra) */}
+        {!wide && (
+          <div className="mb-3 print:hidden">
+            <div className="grid grid-cols-3 border border-ink-900">
+              {(['open', 'entry', 'close'] as const).map((f) => (
+                <button
+                  key={f}
+                  onClick={() => setCol(f)}
+                  className={cx('border-ink-900 py-2 text-xs font-extrabold tracking-wide uppercase not-last:border-r', col === f ? 'bg-ink-900 text-white' : 'bg-[#d9d9d9] text-ink-900')}
+                >
+                  {COLUMN[f].head}
+                  <span className="block text-[10px] font-semibold tracking-normal normal-case opacity-80">{COLUMN[f].sub}</span>
+                </button>
+              ))}
+            </div>
+            <p className="mt-1.5 text-xs text-ink-500">{COLUMN[col].help}</p>
           </div>
         )}
-      </div>
 
-      {sections.length === 0 && <p className="py-10 text-center text-sm text-ink-500">No hay ingredientes con ese nombre.</p>}
+        <table className="w-full border-collapse">
+          <thead>
+            <tr>
+              <th className={cx(TH, 'w-[30%] md:w-[28%]')}>Producto</th>
+              {cols.map((f) => (
+                <th key={f} className={TH}>
+                  {COLUMN[f].head}
+                  {f !== 'entry' && <span className="font-bold normal-case"> - {COLUMN[f].sub}</span>}
+                </th>
+              ))}
+              {wide && <th className={cx(TH, 'w-[16%] bg-ink-900 text-white')}>Consumo</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {sections.length === 0 && (
+              <tr>
+                <td colSpan={nCols} className={cx(TD, 'py-6 text-center text-ink-500')}>
+                  No hay productos con ese nombre.
+                </td>
+              </tr>
+            )}
+            {sections.map(({ loc, lines: ls }) => (
+              <SectionRows key={loc} loc={loc} lines={ls} cols={cols} nCols={nCols} wide={wide} editable={editable} cell={cell} onEdit={(l) => setModal({ ingredient: l })} onAdd={() => setModal({ location: loc })} />
+            ))}
+          </tbody>
+        </table>
 
-      <div className="space-y-4">
-        {sections.map(({ loc, lines: ls }) => {
-          const Icon = LOCATION_ICONS[loc];
-          const isClosed = closed.has(loc) && !term;
-          const closeDone = ls.filter((l) => l.close_m !== null).length;
-          const openDone = ls.filter((l) => l.open_m !== null).length;
-          return (
-            <section key={loc} className="card overflow-hidden print:break-inside-avoid print:rounded-none print:shadow-none">
-              <button className="flex w-full items-center gap-3 border-b border-cream-200 bg-cream-50 px-4 py-3 text-left" onClick={() => toggle(loc)} aria-expanded={!isClosed}>
-                <Icon className="size-5 text-ink-500" />
-                <span className="font-display text-lg font-semibold text-ink-900">{loc}</span>
-                <span className="ml-auto text-xs text-ink-500 tabular-nums">
-                  Inicio {openDone}/{ls.length} · Fin {closeDone}/{ls.length}
-                </span>
-                <ChevronDown className={cx('size-4 text-ink-400 transition-transform print:hidden', isClosed && '-rotate-90')} />
-              </button>
+        <p className="mt-3 text-[11px] text-ink-500">
+          <b>Consumo</b> = inicio + entrada + preparado − lo usado en preparaciones − bajas − fin. Con paquete se escribe como en la hoja: paquetes cerrados + lo que queda del
+          abierto. Se guarda solo; <b>Enter</b> baja al siguiente.
+          {!sheet.entries_editable && editable && ' La entrada solo se anota el mismo día.'}
+        </p>
+      </Paper>
 
-              {!isClosed && (
-                <>
-                  {/* Computador: la hoja completa */}
-                  <div className="hidden overflow-x-auto md:block print:block">
-                    <table className="w-full min-w-[820px] border-collapse">
-                      <thead>
-                        <tr className="border-b border-cream-200 text-left text-[11px] font-bold tracking-wide text-ink-500 uppercase">
-                          <th className="px-4 py-2">Ingrediente</th>
-                          <th className="px-2 py-2">Inicio</th>
-                          <th className="px-2 py-2">Llegó</th>
-                          <th className="px-2 py-2">Preparado / bajas</th>
-                          <th className="px-2 py-2">Fin</th>
-                          <th className="px-4 py-2 text-right">Consumo</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {ls.map((l) => (
-                          <tr key={l.item_id} className="border-b border-cream-200/70 last:border-0 hover:bg-cream-50/60">
-                            <td className="px-4 py-2 align-middle">
-                              <div className="flex items-center gap-1">
-                                <span className="font-semibold text-ink-900">{l.name}</span>
-                                {editButton(l)}
-                              </div>
-                              {l.pack_size_m > 0 && <span className="block text-[11px] text-ink-500">{packDescription(l)}</span>}
-                            </td>
-                            <td className="px-2 py-2">{cell(l, 'open')}</td>
-                            <td className="px-2 py-2">{cell(l, 'entry')}</td>
-                            <td className="px-2 py-2 text-xs text-ink-500">
-                              <Moves l={l} className="flex-col" />
-                            </td>
-                            <td className="px-2 py-2">
-                              {cell(l, 'close')}
-                              {l.close_m === null && l.expected_close_m !== null && editable && (
-                                <span className="mt-0.5 block text-[11px] text-ink-400 print:hidden">Debería quedar ≈ {qtyText(Math.max(0, l.expected_close_m), l) || '0'}</span>
-                              )}
-                            </td>
-                            <td className="px-4 py-2 text-right text-sm">
-                              <Consumption l={l} />
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* Celular: un renglón grande por ingrediente con la columna elegida */}
-                  <ul className="divide-y divide-cream-200 md:hidden print:hidden">
-                    {ls.map((l) => {
-                      const other = [
-                        col !== 'open' && l.open_m !== null ? `Inicio ${qtyText(l.open_m, l)}` : null,
-                        col !== 'entry' && l.entries_m ? `Llegó ${qtyText(l.entries_m, l)}` : null,
-                        col !== 'close' && l.close_m !== null ? `Fin ${qtyText(l.close_m, l)}` : null,
-                      ].filter(Boolean);
-                      return (
-                        <li key={l.item_id} className="px-4 py-3">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1">
-                                <span className="font-semibold text-ink-900">{l.name}</span>
-                                {editButton(l)}
-                              </div>
-                              {l.pack_size_m > 0 && <span className="block text-xs text-ink-500">{packDescription(l)}</span>}
-                            </div>
-                            {l.consumption_m !== null && (
-                              <span className="shrink-0 text-right text-xs text-ink-500">
-                                Consumo
-                                <span className="block text-sm">
-                                  <Consumption l={l} />
-                                </span>
-                              </span>
-                            )}
-                          </div>
-                          <div className="mt-2">{cell(l, col, true)}</div>
-                          {col === 'close' && l.close_m === null && l.expected_close_m !== null && editable && (
-                            <p className="mt-1 text-xs text-ink-400">Debería quedar ≈ {qtyText(Math.max(0, l.expected_close_m), l) || '0'}</p>
-                          )}
-                          {(other.length > 0 || l.produced_m || l.used_m || l.waste_m) && (
-                            <div className="mt-1.5 text-xs text-ink-500">
-                              {other.length > 0 && <span className="mr-3">{other.join(' · ')}</span>}
-                              <Moves l={l} className="inline-flex" />
-                            </div>
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                  {editable && (
-                    <button className="flex w-full items-center gap-2 border-t border-cream-200 px-4 py-2.5 text-sm font-semibold text-ink-500 hover:bg-cream-50 hover:text-ink-900 print:hidden" onClick={() => setModal({ location: loc })}>
-                      <Plus className="size-4" /> Agregar en {loc}
-                    </button>
-                  )}
-                </>
-              )}
-            </section>
-          );
-        })}
-      </div>
-
-      <p className="mt-4 text-xs text-ink-500">
-        <b>Consumo</b> = inicio + llegó + preparado − lo usado en preparaciones − bajas − fin. Es lo que salió en platos; en <b>Validar</b> se compara con lo que vendió la caja.
-      </p>
-
-      {modal && (
-        <IngredientModal
-          ingredient={modal.ingredient}
-          defaultLocation={modal.location}
-          onClose={() => setModal(null)}
-          onSaved={() => setModal(null)}
-        />
-      )}
+      {modal && <IngredientModal ingredient={modal.ingredient} defaultLocation={modal.location} onClose={() => setModal(null)} onSaved={() => setModal(null)} />}
     </div>
+  );
+}
+
+function SectionRows({
+  loc,
+  lines,
+  cols,
+  nCols,
+  wide,
+  editable,
+  cell,
+  onEdit,
+  onAdd,
+}: {
+  loc: Location;
+  lines: DaySheetLine[];
+  cols: SheetField[];
+  nCols: number;
+  wide: boolean;
+  editable: boolean;
+  cell: (l: DaySheetLine, f: SheetField) => React.ReactNode;
+  onEdit: (l: DaySheetLine) => void;
+  onAdd: () => void;
+}) {
+  // Debajo de la franja de cada nevera la hoja dice cómo se cuenta (paquete + uso o unidades + gramos).
+  const sub = lines.some((l) => l.pack_size_m > 0) ? 'paquete + uso' : lines.every((l) => l.base_unit === 'unidad') ? 'unidades' : 'unidades + gms';
+  return (
+    <>
+      <tr className="print:break-inside-avoid">
+        <td className={SECTION}>{loc}</td>
+        <td colSpan={nCols - 1} className="border border-ink-900 bg-[#efefef] px-2 py-1 text-center text-[11px] font-bold text-ink-700">
+          {sub}
+        </td>
+      </tr>
+      {lines.map((l) => {
+        const note = moveNote(l);
+        const consumption = l.consumption_m === null ? '' : `${qtyText(Math.abs(l.consumption_m), l) || '0'}${l.consumption_m < 0 ? ' de más' : ''}`;
+        const hint = l.close_m === null && l.expected_close_m !== null ? `Debería quedar ≈ ${qtyText(Math.max(0, l.expected_close_m), l) || '0'}` : undefined;
+        return (
+          <tr key={l.item_id} className="align-middle">
+            <td className={cx(TD, 'py-1')}>
+              <div className="flex items-center gap-1">
+                <span className="font-semibold">{l.name}</span>
+                {editable && (
+                  <button className="rounded p-0.5 text-ink-400 hover:bg-cream-200 hover:text-ink-900 print:hidden" onClick={() => onEdit(l)} aria-label={`Editar ${l.name}`} title="Cambiar unidad, paquete o lugar">
+                    <Pencil className="size-3" />
+                  </button>
+                )}
+              </div>
+              {(l.pack_size_m > 0 || note) && (
+                <span className="block text-[10.5px] leading-tight text-ink-500">
+                  {l.pack_size_m > 0 && packDescription(l)}
+                  {l.pack_size_m > 0 && note && ' · '}
+                  {note}
+                </span>
+              )}
+            </td>
+            {cols.map((f) => (
+              <td key={f} className={cx(TD, 'px-1 py-1 text-center')} title={f === 'close' ? hint : undefined}>
+                {cell(l, f)}
+                {!wide && consumption && <span className="mt-0.5 block text-[11px] text-ink-500">consumo <b className="text-[#1f3f8f]">{consumption}</b></span>}
+              </td>
+            ))}
+            {wide && <td className={cx(TD, 'text-center font-bold text-[#1f3f8f] tabular-nums')}>{consumption}</td>}
+          </tr>
+        );
+      })}
+      {editable && (
+        <tr className="print:hidden">
+          <td colSpan={nCols} className={cx(TD, 'py-1')}>
+            <button className="flex items-center gap-1.5 text-[12px] font-semibold text-ink-500 hover:text-ink-900" onClick={onAdd}>
+              <Plus className="size-3.5" /> agregar producto en {loc.toLowerCase()}
+            </button>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }

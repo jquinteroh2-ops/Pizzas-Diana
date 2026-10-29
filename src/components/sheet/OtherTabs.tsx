@@ -1,111 +1,40 @@
-// Pestañas «Preparaciones» y «Pedido» de la hoja del día.
+// Pestañas «Preparaciones» y «Pedido» de la hoja del día, con el formato de las hojas de papel.
 import { useState } from 'react';
-import { ArrowRight, ChefHat, Megaphone, PackageCheck, ScrollText } from 'lucide-react';
+import { ChefHat, Megaphone } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useApi, useApp } from '../../lib/app';
-import type { Item, Production, Shortage } from '../../lib/types';
-import { formatTime } from '../../../shared/dates.ts';
+import type { Item, Shortage } from '../../lib/types';
+import { localDate, shortDate } from '../../../shared/dates.ts';
 import { SHORTAGE_LEVEL_LABELS, SHORTAGE_STATUS_LABELS } from '../../../shared/kitchen.ts';
-import { formatNumber, formatQty, niceUnit } from '../../../shared/units.ts';
+import { formatQty } from '../../../shared/units.ts';
 import { useToast } from '../toast';
-import { Badge, EmptyState, ErrorBox, Loading, cx } from '../ui';
-import { efficiencyTone } from '../kitchen/helpers';
-import { MasaSheet, MermaSheet } from '../kitchen/Sheets';
+import { ErrorBox, Loading, cx } from '../ui';
+import { MasaSheet, MermaSheet, Paper, TD, TH, Wide } from '../kitchen/Sheets';
 import type { Flow } from '../kitchen/FlowHost';
 
-// Sin centésimas de gramo: «831,945 g» → «832 g».
-const qty = (m: number, base: Parameters<typeof niceUnit>[1]) => {
-  const r = base === 'unidad' ? m : Math.round(m / 1000) * 1000;
-  return formatQty(r, niceUnit(r, base));
-};
+// ---------- Preparaciones: hoja de merma (porcionado) y hoja de masa ----------
 
-// ---------- Preparaciones ----------
-
-export function PrepTab({ date, onFlow, editable }: { date: string; onFlow: (f: Flow) => void; editable: boolean }) {
-  const prods = useApi<Production[]>(`/productions?from=${date}&to=${date}&limit=200`, [date]);
-  const [paper, setPaper] = useState(false);
-  const list = (prods.data ?? []).filter((p) => p.status === 'activa').sort((a, b) => b.created_at.localeCompare(a.created_at));
-
+export function PrepTab({ onFlow, editable }: { onFlow: (f: Flow) => void; editable: boolean }) {
   return (
     <div className="space-y-5">
-      <div className="card flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
-        <div className="min-w-0 flex-1 text-sm text-ink-700">
-          <p className="font-display text-lg font-semibold text-ink-900">Recetas y porcionado</p>
-          <p className="mt-1">
-            Cuando preparas (salsas, carne molida, adobo, masa) o porcionas (pechuga, cerdo, quesos), el sistema descuenta lo que usaste y suma lo que salió.
-            <b> No hay que contarlo dos veces</b>: en la hoja aparece solo en «Preparado / bajas».
-          </p>
-        </div>
+      <div className="flex flex-col gap-3 border border-ink-900 bg-white px-4 py-3 sm:flex-row sm:items-center">
+        <p className="min-w-0 flex-1 text-sm text-ink-700">
+          Al porcionar (pechuga, cerdo, quesos) o hacer las recetas (salsas, carne molida, adobo, masa), el sistema descuenta lo que se usó y suma lo que salió.{' '}
+          <b>No hay que contarlo otra vez.</b>
+        </p>
         {editable && (
-          <button className="btn shrink-0 bg-ink-900 px-5 py-3 text-white hover:bg-ink-700" onClick={() => onFlow({ kind: 'preparar' })}>
-            <ChefHat className="size-5" /> Registrar preparación
+          <button className="btn shrink-0 bg-ink-900 text-white hover:bg-ink-700" onClick={() => onFlow({ kind: 'preparar' })}>
+            <ChefHat className="size-4" /> Registrar preparación
           </button>
         )}
       </div>
-
-      <section className="card overflow-hidden">
-        <h3 className="border-b border-cream-200 px-4 py-3 font-display text-lg font-semibold">Lo que se preparó este día</h3>
-        {prods.error ? (
-          <ErrorBox message={prods.error} onRetry={prods.reload} />
-        ) : !prods.data ? (
-          <Loading />
-        ) : list.length === 0 ? (
-          <EmptyState icon={ChefHat} title="Nada preparado todavía" text="Lo que registres aparece aquí con lo que usaste, lo que salió y la merma." />
-        ) : (
-          <ul className="divide-y divide-cream-200">
-            {list.map((p) => {
-              const base = p.inputs[0];
-              const merma = p.merma_util_m + p.merma_inutil_m;
-              return (
-                <li key={p.id} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center">
-                  <div className="min-w-0 flex-1">
-                    <p className="font-semibold text-ink-900">{p.preparation_name}</p>
-                    <p className="flex flex-wrap items-center gap-x-1.5 text-sm text-ink-700">
-                      {p.inputs.map((i, idx) => (
-                        <span key={i.item_id}>
-                          {qty(i.qty_m, i.base_unit)} de {i.item_name.toLowerCase()}
-                          {idx < p.inputs.length - 1 ? ',' : ''}
-                        </span>
-                      ))}
-                      <ArrowRight className="size-3.5 text-ink-400" />
-                      <b>
-                        {qty(p.output_m, outputBase(p))} de {p.output_name.toLowerCase()}
-                      </b>
-                    </p>
-                    <p className="text-xs text-ink-500">
-                      {p.user_name} · {formatTime(p.created_at)}
-                      {merma > 0 && base && <> · merma {qty(merma, base.base_unit)}</>}
-                    </p>
-                  </div>
-                  {p.efficiency_pct !== null && (
-                    <span className="self-start sm:self-center"><Badge tone={efficiencyTone(p.efficiency_pct)}>Rindió {formatNumber(p.efficiency_pct)} %</Badge></span>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
-
-      <button className="btn-secondary" onClick={() => setPaper((v) => !v)}>
-        <ScrollText className="size-4" /> {paper ? 'Ocultar' : 'Ver'} la semana como en las hojas de merma y masa
-      </button>
-      {paper && (
-        <div className="space-y-5">
-          <MermaSheet onFlow={onFlow} />
-          <MasaSheet onFlow={onFlow} />
-        </div>
-      )}
+      <MermaSheet onFlow={onFlow} />
+      <MasaSheet onFlow={onFlow} />
     </div>
   );
 }
 
-/** Unidad base de la salida de una preparación (la de su artículo). */
-function outputBase(p: Production) {
-  return p.output_unit === 'kg' || p.output_unit === 'g' ? 'g' : p.output_unit === 'l' || p.output_unit === 'ml' ? 'ml' : 'unidad';
-}
-
-// ---------- Pedido: lo que hace falta ----------
+// ---------- Pedido: lista de lo que hace falta ----------
 
 export function OrderTab({ onFlow }: { onFlow: (f: Flow) => void }) {
   const { bump } = useApp();
@@ -116,6 +45,8 @@ export function OrderTab({ onFlow }: { onFlow: (f: Flow) => void }) {
 
   const reported = new Set((open.data ?? []).map((s) => s.item_id));
   const low = (items.data ?? []).filter((i) => i.status !== 'disponible' && !reported.has(i.id)).sort((a, b) => a.location.localeCompare(b.location) || a.name.localeCompare(b.name, 'es'));
+  const rows = open.data ?? [];
+  const empty = Math.max(0, 8 - rows.length);
 
   const add = async (i: Item) => {
     setBusy(i.id);
@@ -131,68 +62,107 @@ export function OrderTab({ onFlow }: { onFlow: (f: Flow) => void }) {
   };
 
   return (
-    <div className="grid gap-5 lg:grid-cols-2">
-      <section className="card overflow-hidden">
-        <div className="flex items-center justify-between gap-3 border-b border-cream-200 px-4 py-3">
-          <h3 className="font-display text-lg font-semibold">Lista de lo que hace falta</h3>
+    <div className="space-y-5">
+      <Paper
+        title="Lista de lo que hace falta"
+        subtitle="Pedido al proveedor"
+        note="Cuando llegue, anótelo en la columna Entrada de la hoja: sale solo de esta lista"
+        actions={
           <button className="btn btn-sm shrink-0 bg-ink-900 whitespace-nowrap text-white hover:bg-ink-700" onClick={() => onFlow({ kind: 'faltante' })}>
             <Megaphone className="size-4" /> Falta algo
           </button>
-        </div>
+        }
+      >
         {open.error ? (
           <ErrorBox message={open.error} onRetry={open.reload} />
         ) : !open.data ? (
           <Loading />
-        ) : open.data.length === 0 ? (
-          <EmptyState icon={PackageCheck} title="No falta nada" text="Cuando algo se esté acabando, agrégalo aquí. Al anotarlo en «Llegó» sale solo de la lista." />
         ) : (
-          <ul className="divide-y divide-cream-200">
-            {open.data.map((s) => (
-              <li key={s.id} className="flex items-center gap-3 px-4 py-3">
-                <div className="min-w-0 flex-1">
-                  <p className="font-semibold text-ink-900">{s.item_name}</p>
-                  <p className="text-xs text-ink-500">
-                    {s.location} · {s.reported_by_name}
-                    {s.note && <> · «{s.note}»</>}
-                  </p>
-                </div>
-                <Badge tone={s.level === 'agotado' ? 'red' : 'amber'}>{SHORTAGE_LEVEL_LABELS[s.level]}</Badge>
-                <Badge tone={s.status === 'pedido' ? 'green' : 'neutral'}>{SHORTAGE_STATUS_LABELS[s.status]}</Badge>
-              </li>
-            ))}
-          </ul>
+          <Wide>
+            <table className="w-full min-w-[560px] border-collapse">
+              <thead>
+                <tr>
+                  <th className={TH}>Fecha</th>
+                  <th className={TH}>Producto</th>
+                  <th className={TH}>Cómo está</th>
+                  <th className={TH}>Avisó</th>
+                  <th className={TH}>Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((s) => (
+                  <tr key={s.id}>
+                    <td className={cx(TD, 'text-center tabular-nums')}>{shortDate(localDate(s.created_at))}</td>
+                    <td className={cx(TD, 'font-semibold uppercase')}>
+                      {s.item_name}
+                      {s.note && <span className="block text-[11px] font-normal normal-case text-ink-500">{s.note}</span>}
+                    </td>
+                    <td className={cx(TD, 'text-center font-bold', s.level === 'agotado' ? 'text-brand-700' : 'text-amber-700')}>{SHORTAGE_LEVEL_LABELS[s.level].toUpperCase()}</td>
+                    <td className={cx(TD, 'uppercase')}>{s.reported_by_name}</td>
+                    <td className={cx(TD, 'text-center text-[12px] font-bold', s.status === 'pedido' ? 'text-emerald-700' : 'text-ink-700')}>{SHORTAGE_STATUS_LABELS[s.status]}</td>
+                  </tr>
+                ))}
+                {/* Renglones vacíos, como en la hoja impresa. */}
+                {Array.from({ length: empty }, (_, i) => (
+                  <tr key={`v${i}`}>
+                    {Array.from({ length: 5 }, (__, j) => (
+                      <td key={j} className={cx(TD, 'h-8')} />
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Wide>
         )}
-        <p className="border-t border-cream-200 px-4 py-2.5 text-[11px] text-ink-500">
-          Cuando llegue la mercancía, anótala en la columna «Llegó» de la hoja: entra al inventario y sale de esta lista.
-        </p>
-      </section>
+      </Paper>
 
-      <section className="card overflow-hidden">
-        <h3 className="border-b border-cream-200 px-4 py-3 font-display text-lg font-semibold">Según el sistema se está acabando</h3>
+      <Paper title="Según el sistema se está acabando" subtitle="Por debajo del mínimo">
         {items.error ? (
           <ErrorBox message={items.error} onRetry={items.reload} />
         ) : !items.data ? (
           <Loading />
-        ) : low.length === 0 ? (
-          <p className="px-4 py-10 text-center text-sm text-ink-500">Nada por debajo del mínimo.</p>
         ) : (
-          <ul className="divide-y divide-cream-200">
-            {low.map((i) => (
-              <li key={i.id} className="flex items-center gap-3 px-4 py-2.5">
-                <div className="min-w-0 flex-1">
-                  <p className="font-semibold text-ink-900">{i.name}</p>
-                  <p className={cx('text-xs', i.status === 'agotado' ? 'text-brand-700' : 'text-amber-700')}>
-                    {i.status === 'agotado' ? 'Se acabó' : `Quedan ${formatQty(i.qty_m, i.unit)} (mínimo ${formatQty(i.min_m, i.unit)})`}
-                  </p>
-                </div>
-                <button className="btn-secondary btn-sm" disabled={busy === i.id} onClick={() => void add(i)}>
-                  Agregar a la lista
-                </button>
-              </li>
-            ))}
-          </ul>
+          <Wide>
+            <table className="w-full min-w-[480px] border-collapse">
+              <thead>
+                <tr>
+                  <th className={TH}>Producto</th>
+                  <th className={TH}>Queda</th>
+                  <th className={TH}>Mínimo</th>
+                  <th className={cx(TH, 'print:hidden')} />
+                </tr>
+              </thead>
+              <tbody>
+                {low.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className={cx(TD, 'py-5 text-center text-ink-500')}>
+                      Nada por debajo del mínimo.
+                    </td>
+                  </tr>
+                )}
+                {low.map((i) => (
+                  <tr key={i.id}>
+                    <td className={cx(TD, 'font-semibold uppercase')}>{i.name}</td>
+                    <td className={cx(TD, 'text-center tabular-nums', i.status === 'agotado' ? 'font-bold text-brand-700' : 'text-amber-700')}>
+                      {i.status === 'agotado' ? 'SE ACABÓ' : formatQty(i.qty_m, i.unit)}
+                    </td>
+                    <td className={cx(TD, 'text-center tabular-nums')}>{formatQty(i.min_m, i.unit)}</td>
+                    <td className={cx(TD, 'text-center print:hidden')}>
+                      <button
+                        className="rounded-md border border-ink-400 px-2 py-1 text-[11px] font-bold text-ink-700 hover:border-ink-900 disabled:opacity-50"
+                        disabled={busy === i.id}
+                        onClick={() => void add(i)}
+                      >
+                        Agregar a la lista
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Wide>
         )}
-      </section>
+      </Paper>
     </div>
   );
 }
