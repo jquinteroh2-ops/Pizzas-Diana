@@ -1025,13 +1025,15 @@ class BrowserDB {
     }
     const baseUsed = used.find((u) => u.item_id === p.inputs[0].item_id)!.qty_m;
     const expected = scaleBatch(p.inputs, p.std_output_m, baseUsed).expectedM;
-    const short = used.filter((u) => this.item(u.item_id).qty_m < u.qty_m);
-    if (short.length) throw conflict(`No alcanza ${short.map((s) => s.item_name).join(', ')} según el inventario. Si sí hay, avisa al administrador para que corrija la existencia.`);
 
     const at = opts.at ?? nowIso();
     const isDemo = opts.isDemo ?? this.state.demoMode;
     const id = this.state.seq.prod++;
-    for (const u of used) this.applyMovement({ itemId: u.item_id, delta: -u.qty_m, type: 'produccion', reason: `Se usó para ${p.name} (#${id})`, user, at, isDemo });
+    // Lo anotado en la hoja manda: si el sistema cree que hay menos, se descuenta lo que haya.
+    for (const u of used) {
+      const take = Math.min(u.qty_m, this.item(u.item_id).qty_m);
+      if (take > 0) this.applyMovement({ itemId: u.item_id, delta: -take, type: 'produccion', reason: `Se usó para ${p.name} (#${id})`, user, at, isDemo });
+    }
     this.applyMovement({ itemId: out.id, delta: outM, type: 'produccion', reason: `Preparación #${id}`, user, at, isDemo });
     const rec: ProdRec = {
       id,
@@ -1513,12 +1515,16 @@ class BrowserDB {
     const out = new Map<number, DayMoves>();
     for (const m of this.state.movements) {
       if (m.created_at < from || m.created_at >= to) continue;
-      if (m.type !== 'entrada' && m.type !== 'produccion') continue;
+      if (m.type !== 'entrada') continue;
       const d = out.get(m.item_id) ?? { entries_m: 0, produced_m: 0, used_m: 0, waste_m: 0 };
-      if (m.type === 'entrada') d.entries_m += m.delta_m;
-      else if (m.delta_m > 0) d.produced_m += m.delta_m;
-      else d.used_m -= m.delta_m;
+      d.entries_m += m.delta_m;
       out.set(m.item_id, d);
+    }
+    const get = (id: number) => out.get(id) ?? (out.set(id, { entries_m: 0, produced_m: 0, used_m: 0, waste_m: 0 }), out.get(id)!);
+    for (const p of this.state.productions) {
+      if (p.local_date !== date || p.status !== 'activa') continue;
+      get(p.output_item_id).produced_m += p.output_m;
+      for (const i of p.inputs) get(i.item_id).used_m += i.qty_m;
     }
     // Bajas del día en que se reportaron (lo que salió de la nevera), menos las rechazadas.
     for (const w of this.state.wastes) {

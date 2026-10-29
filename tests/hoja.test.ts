@@ -199,3 +199,27 @@ test('la jefa de cocina agrega ingredientes y cambia su unidad: de gramos a unid
   sales.registerSale(db, k.caja, { requestId: rid(), items: [{ productId: k.hamb.id, qty: 5 }] });
   assert.equal(qty(db, k.queso.id), 11_000);
 });
+
+test('la casilla de la hoja se lee como se escribe a mano: «3 paq + 385», «542 grs», «2 und»', async () => {
+  const { parseSheetText } = await import('../shared/sheetText.ts');
+  const pack = { unit: 'g', base_unit: 'g', pack_size_m: 1_000_000, pack_label: 'paquete' } as const;
+  const kg = { unit: 'kg', base_unit: 'g', pack_size_m: 0, pack_label: '' } as const;
+  const und = { unit: 'unidad', base_unit: 'unidad', pack_size_m: 10_000, pack_label: 'paquete' } as const;
+  const ml = { unit: 'ml', base_unit: 'ml', pack_size_m: 0, pack_label: '' } as const;
+  assert.equal(parseSheetText('3 paq + 385', pack), 3_385_000);
+  assert.equal(parseSheetText('3pag + 785', pack), 3_785_000); // así se ve «paq» escrito a mano
+  assert.equal(parseSheetText('3 + 385', pack), 3_385_000);
+  assert.equal(parseSheetText('2 paq', pack), 2_000_000);
+  assert.equal(parseSheetText('1 paq +', pack), 1_000_000);
+  assert.equal(parseSheetText('542 grs', pack), 542_000);
+  assert.equal(parseSheetText('3 paq + 385 g', pack), 3_385_000); // lo que muestra el sistema se vuelve a leer igual
+  assert.equal(parseSheetText('1,085 kg', kg), 1_085_000);
+  assert.equal(parseSheetText('518 grs', kg), 518_000);
+  assert.equal(parseSheetText('1,2', kg), 1_200_000); // sin unidad: la del producto
+  assert.equal(parseSheetText('2 paq + 5 und', und), 25_000);
+  assert.equal(parseSheetText('24 und', und), 24_000);
+  assert.equal(parseSheetText('2753 ml', ml), 2_753_000);
+  assert.equal(parseSheetText('', pack), null);
+  assert.ok(Number.isNaN(parseSheetText('mucho', pack)));
+  assert.ok(Number.isNaN(parseSheetText('2 kg', und))); // un producto por unidades no se escribe en kilos
+});

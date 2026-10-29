@@ -1,6 +1,6 @@
 // Pestañas «Preparaciones» y «Pedido» de la hoja del día, con el formato de las hojas de papel.
 import { useState } from 'react';
-import { ChefHat, Megaphone } from 'lucide-react';
+import { Megaphone } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useApi, useApp } from '../../lib/app';
 import type { Item, Shortage } from '../../lib/types';
@@ -14,22 +14,15 @@ import type { Flow } from '../kitchen/FlowHost';
 
 // ---------- Preparaciones: hoja de merma (porcionado) y hoja de masa ----------
 
-export function PrepTab({ onFlow, editable }: { onFlow: (f: Flow) => void; editable: boolean }) {
+export function PrepTab() {
   return (
     <div className="space-y-5">
-      <div className="flex flex-col gap-3 border border-ink-900 bg-white px-4 py-3 sm:flex-row sm:items-center">
-        <p className="min-w-0 flex-1 text-sm text-ink-700">
-          Al porcionar (pechuga, cerdo, quesos) o hacer las recetas (salsas, carne molida, adobo, masa), el sistema descuenta lo que se usó y suma lo que salió.{' '}
-          <b>No hay que contarlo otra vez.</b>
-        </p>
-        {editable && (
-          <button className="btn shrink-0 bg-ink-900 text-white hover:bg-ink-700" onClick={() => onFlow({ kind: 'preparar' })}>
-            <ChefHat className="size-4" /> Registrar preparación
-          </button>
-        )}
-      </div>
-      <MermaSheet onFlow={onFlow} />
-      <MasaSheet onFlow={onFlow} />
+      <p className="border border-ink-900 bg-white px-4 py-3 text-sm text-ink-700">
+        Al porcionar (pechuga, cerdo, quesos) o hacer las recetas (salsas, carne molida, adobo, masa), se llena la columna de hoy y se guarda: el sistema descuenta lo que se usó
+        y suma lo que salió. <b>No hay que contarlo otra vez en el inventario.</b>
+      </p>
+      <MermaSheet />
+      <MasaSheet />
     </div>
   );
 }

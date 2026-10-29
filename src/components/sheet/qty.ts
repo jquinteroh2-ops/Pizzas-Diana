@@ -1,7 +1,7 @@
 // Cantidades de la hoja del día, escritas como en el papel: «3 paq + 385 g» o «1,085 kg».
-import { formatNumber, formatQty, fromMilli, toMilli, UNIT_SHORT, type BaseUnit, type Unit } from '../../../shared/units.ts';
+import { formatQty, UNIT_SHORT, type BaseUnit, type Unit } from '../../../shared/units.ts';
 import { formatPacks } from '../../../shared/kitchen.ts';
-import { parseQty, smallUnit } from '../kitchen/helpers';
+import { smallUnit } from '../kitchen/helpers';
 
 export interface Measure {
   unit: Unit;
@@ -45,33 +45,6 @@ export function packDescription(m: Measure): string {
   return `${m.pack_label || 'paquete'} de ${size}`;
 }
 
-export interface Draft {
-  packs: string;
-  loose: string;
-}
-
-// Sin separador de miles; en g, ml y unidades con máximo 1 decimal (en kg y l se dejan 3).
-const show = (n: number, u: Unit) => formatNumber(u === 'kg' || u === 'l' ? n : Math.round(n * 10) / 10).replace(/\./g, '');
-
-export function toDraft(milli: number | null, m: Measure): Draft {
-  if (milli === null) return { packs: '', loose: '' };
-  if (m.pack_size_m > 0) {
-    const packs = Math.floor(milli / m.pack_size_m);
-    const rest = milli - packs * m.pack_size_m;
-    return { packs: packs ? String(packs) : '', loose: rest || !packs ? show(fromMilli(rest, looseUnit(m)), looseUnit(m)) : '' };
-  }
-  return { packs: '', loose: show(fromMilli(milli, m.unit), m.unit) };
-}
-
-/** null = casilla vacía; NaN = lo escrito no es un número válido. */
-export function draftToMilli(d: Draft, m: Measure): number | null {
-  const p = d.packs.trim();
-  const l = d.loose.trim();
-  if (!p && !l) return null;
-  const packs = p ? parseQty(p) : 0;
-  const loose = l ? parseQty(l) : 0;
-  if (!Number.isFinite(packs) || !Number.isFinite(loose) || packs < 0 || loose < 0) return NaN;
-  return Math.round(packs * m.pack_size_m) + toMilli(loose, looseUnit(m));
-}
-
 export const unitShort = (u: Unit) => UNIT_SHORT[u];
+
+export { parseSheetText } from '../../../shared/sheetText.ts';

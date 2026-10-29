@@ -2,19 +2,20 @@
 // inventario diario (inicio | entrada | fin | consumo), merma, masa de pizza y bajas.
 // Se llenan en la misma tabla y se pueden imprimir con el mismo formato.
 import { useMemo, useState, type ReactNode } from 'react';
-import { ChevronLeft, ChevronRight, Printer, Pencil, Copy, Loader2, Camera, Plus } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Printer, Pencil, Copy, Loader2, Camera } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useApi, useApp } from '../../lib/app';
-import type { InventorySheet, InventorySheetLine, PeriodReport, Preparation, Production, Waste } from '../../lib/types';
+import type { InventorySheet, InventorySheetLine, Item, PeriodReport, Preparation, Production, Waste } from '../../lib/types';
 import { useToast } from '../toast';
 import { Loading, ErrorBox, Modal, cx } from '../ui';
 import { CountReview, RejectWaste } from './Review';
 import { WastePhoto } from './ReportFlows';
 import { formatNumber, formatQty, fromMilli, niceUnit, toMilli, UNIT_SHORT, baseOf, type BaseUnit, type Unit } from '../../../shared/units.ts';
-import { formatPacks, WASTE_REASON_LABELS, type Location } from '../../../shared/kitchen.ts';
+import { formatPacks, WASTE_REASON_LABELS, type Location, type WasteReason } from '../../../shared/kitchen.ts';
 import { addDays, daysBetween, formatTime, localDate, shortDate, shortDateDow, weekEnd, weekStart } from '../../../shared/dates.ts';
 import type { Flow } from './FlowHost';
-import { parseQty, smallUnit, validQty } from './helpers';
+import { compressPhoto, parseQty, smallUnit, validQty } from './helpers';
+import { parseSheetText } from '../sheet/qty';
 
 // ---------- Piezas con el estilo de la hoja de papel ----------
 
@@ -74,7 +75,7 @@ function DayNav({ date, setDate }: { date: string; setDate: (d: string) => void 
   );
 }
 
-function WeekNav({ from, setDate }: { from: string; setDate: (d: string) => void }) {
+export function WeekNav({ from, setDate }: { from: string; setDate: (d: string) => void }) {
   const today = localDate();
   return (
     <>
@@ -326,7 +327,7 @@ export function InventoryDaySheet() {
 
 // ---------- Datos de la semana para merma y masa ----------
 
-function useWeekProductions(date: string) {
+export function useWeekProductions(date: string) {
   const from = weekStart(date);
   const to = weekEnd(date);
   const prods = useApi<Production[]>(`/productions?from=${from}&to=${to}&limit=500`, [from, to]);
@@ -335,18 +336,45 @@ function useWeekProductions(date: string) {
   return { from, to, days, prods, preps };
 }
 
-const dayHead = (d: string) => {
+export const dayHead = (d: string) => {
   const [, m, day] = d.split('-');
   return `${Number(day)}/${Number(m)}`;
 };
 
+// La casilla para escribir en la hoja (se escribe como a mano: «1000», «1,2 kg»).
+function SheetInput({ value, onChange, label }: { value: string; onChange: (v: string) => void; label: string }) {
+  return (
+    <input
+      className="h-8 w-full bg-transparent px-1 text-center text-[14px] font-semibold text-[#1f3f8f] tabular-nums outline-none focus:bg-amber-50 focus:ring-2 focus:ring-ink-900 focus:ring-inset"
+      value={value}
+      aria-label={label}
+      autoComplete="off"
+      inputMode="decimal"
+      onChange={(e) => onChange(e.target.value)}
+    />
+  );
+}
+
+/** Lo escrito en una casilla de merma o masa, en milésimas de la unidad base (null si está vacía o no se entiende). */
+function sheetMilli(text: string, base: BaseUnit): number | null {
+  const m = parseSheetText(text, { unit: smallUnit(base), base_unit: base, pack_size_m: 0, pack_label: '' });
+  return m === null || Number.isNaN(m) ? null : m;
+}
+
 // ---------- 2. Merma ----------
 
-export function MermaSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
-  const { can } = useApp();
+type MermaDraft = { ini: string; util: string; fin: string };
+
+export function MermaSheet(_props: { onFlow?: (f: Flow) => void }) {
+  const { can, bump } = useApp();
+  const toast = useToast();
   const today = localDate();
   const [date, setDate] = useState(today);
   const { from, days, prods, preps } = useWeekProductions(date);
+  const [draft, setDraft] = useState<Record<number, MermaDraft>>({});
+  const [more, setMore] = useState<Set<number>>(new Set());
+  const [busy, setBusy] = useState<number | null>(null);
+  const canWrite = can('kitchen.use');
 
   const blocks = useMemo(() => {
     const list = (preps.data ?? []).filter((p) => p.active && p.mode === 'transformacion');
@@ -368,7 +396,43 @@ export function MermaSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
   // En la hoja se pesa al gramo: sin decimales de gramo.
   const g = (m: number, base: BaseUnit) => {
     const r = base === 'unidad' ? m : Math.round(m / 1000) * 1000;
-    return formatQty(r, niceUnit(r, base));
+    return formatQty(r, smallUnit(base));
+  };
+
+  const save = async (p: Preparation) => {
+    const d = draft[p.id];
+    const base = p.inputs[0]?.base_unit ?? 'g';
+    const ini = d ? sheetMilli(d.ini, base) : null;
+    const fin = d ? sheetMilli(d.fin, p.output_base) : null;
+    const util = d && d.util.trim() ? sheetMilli(d.util, base) : 0;
+    if (!ini || !fin || util === null) {
+      toast.error('Falta llenar', 'Escriba el peso inicial y el peso final (y la merma útil si la hubo).');
+      return;
+    }
+    setBusy(p.id);
+    try {
+      await api.post('/productions', {
+        preparation_id: p.id,
+        input_qty: ini / 1000,
+        input_unit: smallUnit(base),
+        output_qty: fin / 1000,
+        output_unit: smallUnit(p.output_base),
+        merma_util_qty: util / 1000,
+        merma_util_unit: smallUnit(base),
+      });
+      toast.success('Anotado en la hoja de merma', p.name);
+      setDraft((x) => ({ ...x, [p.id]: { ini: '', util: '', fin: '' } }));
+      setMore((s) => {
+        const n = new Set(s);
+        n.delete(p.id);
+        return n;
+      });
+      bump();
+    } catch (e) {
+      toast.fail(e);
+    } finally {
+      setBusy(null);
+    }
   };
 
   return (
@@ -381,48 +445,76 @@ export function MermaSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
         <div className="space-y-6">
           {blocks.map(({ p, byDay }) => {
             const base = p.inputs[0]?.base_unit ?? 'g';
-            const rows: [string, (x: { input: number; util: number; inutil: number; output: number }) => string][] = [
-              ['Peso inicial', (x) => g(x.input, base)],
-              ['Merma útil', (x) => g(x.util, base)],
-              ['Merma inútil', (x) => g(x.inutil, base)],
-              ['Peso final', (x) => g(x.output, p.output_base)],
-              ['Rendimiento', (x) => (x.input ? `${formatNumber(Math.round((x.output / x.input) * 1000) / 10)} %` : '')],
+            const d = draft[p.id] ?? { ini: '', util: '', fin: '' };
+            const set = (k: keyof MermaDraft) => (v: string) => setDraft((x) => ({ ...x, [p.id]: { ...d, [k]: v } }));
+            const todayData = byDay.get(today);
+            const writing = canWrite && date <= today && (!todayData || more.has(p.id));
+            const ini = sheetMilli(d.ini, base);
+            const fin = sheetMilli(d.fin, p.output_base);
+            const util = d.util.trim() ? sheetMilli(d.util, base) : 0;
+            const inutil = ini && fin !== null && util !== null ? Math.max(0, ini - fin - util) : null;
+            const um = UNIT_SHORT[smallUnit(base)].toUpperCase();
+            type Row = { key: string; label: string; show: (x: { input: number; util: number; inutil: number; output: number }) => string; input?: keyof MermaDraft; calc?: string };
+            const rows: Row[] = [
+              { key: 'ini', label: 'Peso inicial', show: (x) => g(x.input, base), input: 'ini' },
+              { key: 'util', label: 'Merma útil', show: (x) => g(x.util, base), input: 'util' },
+              { key: 'inutil', label: 'Merma inútil', show: (x) => g(x.inutil, base), calc: inutil === null ? '' : g(inutil, base) },
+              { key: 'fin', label: 'Peso final', show: (x) => g(x.output, p.output_base), input: 'fin' },
+              { key: 'rend', label: 'Rendimiento', show: (x) => (x.input ? `${formatNumber(Math.round((x.output / x.input) * 1000) / 10)} %` : '') },
             ];
             return (
               <Wide key={p.id}>
-                <table className="w-full min-w-[720px] table-fixed border-collapse">
+                <table className="w-full min-w-[760px] table-fixed border-collapse">
                   <thead>
                     <tr>
-                      <td className={SECTION} colSpan={8}>
+                      <td className={SECTION} colSpan={9}>
                         {p.inputs[0]?.item_name} → {p.name} · estándar {formatNumber(p.std_yield_pct ?? 0)} %
                       </td>
                     </tr>
                     <tr>
                       <th className={cx(TH, 'w-32 text-left')}>Fecha</th>
-                      {days.map((d) => (
-                        <th key={d} className={cx(TH, d === today && 'bg-crust-300')}>
-                          {dayHead(d)}
+                      <th className={cx(TH, 'w-12')}>UM</th>
+                      {days.map((day) => (
+                        <th key={day} className={cx(TH, day === today && 'bg-crust-300')}>
+                          {dayHead(day)}
                         </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map(([label, fn]) => (
-                      <tr key={label}>
-                        <td className={cx(TD, 'font-bold uppercase text-[11px]')}>{label}</td>
-                        {days.map((d) => {
-                          const x = byDay.get(d);
-                          const low = !!(label === 'Rendimiento' && x && p.std_yield_pct && x.input && (x.output / x.input) * 100 < p.std_yield_pct * 0.9);
+                    {rows.map((r) => (
+                      <tr key={r.key}>
+                        <td className={cx(TD, 'text-[11px] font-bold uppercase')}>{r.label}</td>
+                        <td className={cx(TD, 'text-center text-[11px] font-bold')}>{r.key === 'rend' ? '%' : r.key === 'fin' ? UNIT_SHORT[smallUnit(p.output_base)].toUpperCase() : um}</td>
+                        {days.map((day) => {
+                          const x = byDay.get(day);
+                          if (day === today && writing) {
+                            return (
+                              <td key={day} className={cx(TD, 'bg-amber-50/40 p-0 text-center')}>
+                                {r.input ? (
+                                  <SheetInput value={d[r.input]} onChange={set(r.input)} label={`${p.name}: ${r.label.toLowerCase()}`} />
+                                ) : r.key === 'rend' ? (
+                                  <button
+                                    className="m-1 rounded bg-ink-900 px-2 py-1 text-[11px] font-bold text-white disabled:opacity-40 print:hidden"
+                                    disabled={busy === p.id || !ini || !fin}
+                                    onClick={() => void save(p)}
+                                  >
+                                    {busy === p.id ? <Loader2 className="mx-auto size-3 animate-spin" /> : 'Guardar'}
+                                  </button>
+                                ) : (
+                                  <span className="text-[13px] text-ink-500 tabular-nums">{r.calc}</span>
+                                )}
+                              </td>
+                            );
+                          }
+                          const low = !!(r.key === 'rend' && x && p.std_yield_pct && x.input && (x.output / x.input) * 100 < p.std_yield_pct * 0.9);
                           return (
-                            <td key={d} className={cx(TD, 'text-center tabular-nums', low && 'font-bold text-brand-700')}>
-                              {x ? (
-                                fn(x)
-                              ) : label === 'Peso inicial' && d === today && can('kitchen.use') ? (
-                                <button className="text-xs font-bold text-brand-700 underline print:hidden" onClick={() => onFlow({ kind: 'preparar', prepId: p.id })}>
-                                  Registrar
+                            <td key={day} className={cx(TD, 'text-center font-semibold text-[#1f3f8f] tabular-nums', low && 'text-brand-700')}>
+                              {x ? r.show(x) : ''}
+                              {r.key === 'rend' && day === today && x && canWrite && (
+                                <button className="block w-full text-[10px] font-bold text-ink-500 underline print:hidden" onClick={() => setMore((s) => new Set(s).add(p.id))}>
+                                  + anotar otra
                                 </button>
-                              ) : (
-                                ''
                               )}
                             </td>
                           );
@@ -435,7 +527,10 @@ export function MermaSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
             );
           })}
           {blocks.length === 0 && <p className="text-sm text-ink-500">No hay preparaciones con merma configuradas.</p>}
-          <p className="text-[11px] text-ink-500">Merma inútil = peso inicial − peso final − merma útil. Cuando se prepara algo, la hoja se llena sola.</p>
+          <p className="text-[11px] text-ink-500">
+            Se llena la columna de hoy: peso inicial, merma útil (lo que se aprovecha) y peso final. La merma inútil = peso inicial − merma útil − peso final. Al guardar, el sistema
+            descuenta lo que entró y suma lo que salió.
+          </p>
         </div>
       )}
     </Paper>
@@ -444,27 +539,51 @@ export function MermaSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
 
 // ---------- 3. Masa de pizza ----------
 
-export function MasaSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
-  const { can } = useApp();
+export function MasaSheet(_props: { onFlow?: (f: Flow) => void }) {
+  const { can, bump } = useApp();
+  const toast = useToast();
   const today = localDate();
   const [date, setDate] = useState(today);
   const { from, days, prods, preps } = useWeekProductions(date);
   const batches = (preps.data ?? []).filter((p) => p.active && p.mode === 'lote');
+  const [draft, setDraft] = useState<Record<number, Record<string, string>>>({});
+  const [more, setMore] = useState<Set<number>>(new Set());
+  const [busy, setBusy] = useState<number | null>(null);
+  const canWrite = can('kitchen.use');
+
+  const save = async (p: Preparation) => {
+    const d = draft[p.id] ?? {};
+    const inputs = p.inputs.map((i) => ({ i, m: d[i.item_id] ? sheetMilli(d[i.item_id], i.base_unit) : 0 }));
+    const out = d.out ? sheetMilli(d.out, p.output_base) : null;
+    if (inputs.some((x) => x.m === null) || !inputs[0].m || !out) {
+      toast.error('Falta llenar', `Escriba al menos ${p.inputs[0]?.item_name.toLowerCase()} y el rendimiento final.`);
+      return;
+    }
+    setBusy(p.id);
+    try {
+      await api.post('/productions', {
+        preparation_id: p.id,
+        inputs: inputs.filter((x) => x.m).map((x) => ({ item_id: x.i.item_id, qty: x.m! / 1000, unit: smallUnit(x.i.base_unit) })),
+        output_qty: out / 1000,
+        output_unit: smallUnit(p.output_base),
+      });
+      toast.success('Anotado en la hoja de masa', p.name);
+      setDraft((x) => ({ ...x, [p.id]: {} }));
+      setMore((s) => {
+        const n = new Set(s);
+        n.delete(p.id);
+        return n;
+      });
+      bump();
+    } catch (e) {
+      toast.fail(e);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   return (
-    <Paper
-      title="Masa de pizza"
-      subtitle={`Semana del ${shortDate(from)} al ${shortDate(addDays(from, 6))}`}
-      nav={<WeekNav from={from} setDate={setDate} />}
-      actions={
-        can('kitchen.use') &&
-        batches[0] && (
-          <button className="btn-primary btn-sm" onClick={() => onFlow({ kind: 'preparar', prepId: batches[0].id })}>
-            <Plus className="size-4" /> Registrar lote
-          </button>
-        )
-      }
-    >
+    <Paper title="Masa de pizza" subtitle={`Semana del ${shortDate(from)} al ${shortDate(addDays(from, 6))}`} nav={<WeekNav from={from} setDate={setDate} />}>
       {prods.error ? (
         <ErrorBox message={prods.error} onRetry={prods.reload} />
       ) : !prods.data || !preps.data ? (
@@ -485,8 +604,12 @@ export function MasaSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
               out.set(pr.local_date, (out.get(pr.local_date) ?? 0) + pr.output_m);
               expected.set(pr.local_date, (expected.get(pr.local_date) ?? 0) + pr.expected_m);
             }
+            const d = draft[p.id] ?? {};
+            const set = (k: string) => (v: string) => setDraft((x) => ({ ...x, [p.id]: { ...d, [k]: v } }));
+            const writing = canWrite && (!out.has(today) || more.has(p.id));
             // La UM queda fija por fila (g o ml): en el papel se confundían con «kg».
             const um = (b: BaseUnit) => UNIT_SHORT[smallUnit(b)].toUpperCase();
+            const fmt = (m: number, b: BaseUnit) => formatNumber(fromMilli(b === 'unidad' ? m : Math.round(m / 1000) * 1000, smallUnit(b)));
             return (
               <Wide key={p.id}>
                 <table className="w-full min-w-[820px] border-collapse">
@@ -501,9 +624,9 @@ export function MasaSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
                       <th className={TH} colSpan={2}>
                         Receta estándar
                       </th>
-                      {days.map((d) => (
-                        <th key={d} className={cx(TH, d === today && 'bg-crust-300')}>
-                          {dayHead(d)}
+                      {days.map((day) => (
+                        <th key={day} className={cx(TH, day === today && 'bg-crust-300')}>
+                          {dayHead(day)}
                         </th>
                       ))}
                     </tr>
@@ -511,8 +634,8 @@ export function MasaSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
                       <th className={cx(TH, 'text-left')}>Ingrediente</th>
                       <th className={TH}>Cantidad</th>
                       <th className={TH}>UM</th>
-                      {days.map((d) => (
-                        <th key={d} className={TH}>
+                      {days.map((day) => (
+                        <th key={day} className={TH}>
                           Cantidad
                         </th>
                       ))}
@@ -521,32 +644,46 @@ export function MasaSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
                   <tbody>
                     {p.inputs.map((i) => (
                       <tr key={i.item_id}>
-                        <td className={cx(TD, 'font-bold uppercase text-[11px]')}>{i.item_name}</td>
-                        <td className={cx(TD, 'text-center tabular-nums')}>{formatNumber(fromMilli(i.qty_m, smallUnit(i.base_unit)))}</td>
+                        <td className={cx(TD, 'text-[11px] font-bold uppercase')}>{i.item_name}</td>
+                        <td className={cx(TD, 'text-center tabular-nums')}>{fmt(i.qty_m, i.base_unit)}</td>
                         <td className={cx(TD, 'text-center text-[11px] font-bold')}>{um(i.base_unit)}</td>
-                        {days.map((d) => {
-                          const v = used.get(d)?.get(i.item_id);
+                        {days.map((day) => {
+                          if (day === today && writing) {
+                            return (
+                              <td key={day} className={cx(TD, 'bg-amber-50/40 p-0')}>
+                                <SheetInput value={d[i.item_id] ?? ''} onChange={set(String(i.item_id))} label={`${p.name}: ${i.item_name}`} />
+                              </td>
+                            );
+                          }
+                          const v = used.get(day)?.get(i.item_id);
                           return (
-                            <td key={d} className={cx(TD, 'text-center tabular-nums')}>
-                              {v ? `${formatNumber(fromMilli(v, smallUnit(i.base_unit)))} ${UNIT_SHORT[smallUnit(i.base_unit)]}` : ''}
+                            <td key={day} className={cx(TD, 'text-center font-semibold text-[#1f3f8f] tabular-nums')}>
+                              {v ? fmt(v, i.base_unit) : ''}
                             </td>
                           );
                         })}
                       </tr>
                     ))}
                     <tr>
-                      <td className={cx(TD, 'font-extrabold uppercase text-[11px]')}>Rendimiento final</td>
-                      <td className={cx(TD, 'text-center font-bold tabular-nums')}>{formatNumber(fromMilli(p.std_output_m, smallUnit(p.output_base)))}</td>
+                      <td className={cx(TD, 'text-[11px] font-extrabold uppercase')}>Rendimiento final</td>
+                      <td className={cx(TD, 'text-center font-bold tabular-nums')}>{fmt(p.std_output_m, p.output_base)}</td>
                       <td className={cx(TD, 'text-center text-[11px] font-bold')}>{um(p.output_base)}</td>
-                      {days.map((d) => {
-                        const o = out.get(d);
-                        const e = expected.get(d);
+                      {days.map((day) => {
+                        if (day === today && writing) {
+                          return (
+                            <td key={day} className={cx(TD, 'bg-amber-50/40 p-0')}>
+                              <SheetInput value={d.out ?? ''} onChange={set('out')} label={`${p.name}: rendimiento final`} />
+                            </td>
+                          );
+                        }
+                        const o = out.get(day);
+                        const e = expected.get(day);
                         const eff = o && e ? Math.round((o / e) * 1000) / 10 : null;
                         return (
-                          <td key={d} className={cx(TD, 'text-center font-bold tabular-nums')}>
+                          <td key={day} className={cx(TD, 'text-center font-bold text-[#1f3f8f] tabular-nums')}>
                             {o ? (
                               <>
-                                {formatQty(o, niceUnit(o, p.output_base))}
+                                {fmt(o, p.output_base)}
                                 {eff !== null && <span className={cx('block text-[10px]', eff < 90 ? 'text-brand-700' : 'text-emerald-700')}>{formatNumber(eff)} %</span>}
                               </>
                             ) : (
@@ -556,6 +693,27 @@ export function MasaSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
                         );
                       })}
                     </tr>
+                    {canWrite && (
+                      <tr className="print:hidden">
+                        <td colSpan={3} className={cx(TD, 'text-[11px] text-ink-500')}>
+                          Llene la columna de hoy y guarde.
+                        </td>
+                        {days.map((day) => (
+                          <td key={day} className={cx(TD, 'p-1 text-center')}>
+                            {day === today &&
+                              (writing ? (
+                                <button className="rounded bg-ink-900 px-2 py-1 text-[11px] font-bold text-white disabled:opacity-40" disabled={busy === p.id} onClick={() => void save(p)}>
+                                  {busy === p.id ? <Loader2 className="mx-auto size-3 animate-spin" /> : 'Guardar'}
+                                </button>
+                              ) : (
+                                <button className="text-[10px] font-bold text-ink-500 underline" onClick={() => setMore((s) => new Set(s).add(p.id))}>
+                                  + anotar otro lote
+                                </button>
+                              ))}
+                          </td>
+                        ))}
+                      </tr>
+                    )}
                   </tbody>
                 </table>
                 {p.instructions && <p className="mt-1 text-[11px] text-ink-500">{p.instructions}</p>}
@@ -570,7 +728,95 @@ export function MasaSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
 
 // ---------- 4. Formato de bajas ----------
 
-export function BajasSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
+// Motivo escrito como en la hoja («poca rotación y tiene moho») → el tipo de baja del sistema.
+function reasonFrom(text: string): WasteReason {
+  const t = text.toLowerCase();
+  if (/venc/.test(t)) return 'vencido';
+  if (/moho|dañ|dan[oa]|podr|malo|mala|rotaci/.test(t)) return 'danado';
+  if (/quem|mal prepar|pas[oó] de/.test(t)) return 'mal_preparado';
+  if (/cay|reg[oó]|derram|accident/.test(t)) return 'accidente';
+  if (/devol|cliente/.test(t)) return 'devolucion';
+  return 'otro';
+}
+
+/** El renglón en blanco de la hoja de bajas: se escribe ahí mismo y se guarda. */
+function NewWasteRow({ onSaved }: { onSaved: () => void }) {
+  const { user } = useApp();
+  const toast = useToast();
+  const items = useApi<Item[]>('/kitchen/items');
+  const [product, setProduct] = useState('');
+  const [amount, setAmount] = useState('');
+  const [reason, setReason] = useState('');
+  const [photo, setPhoto] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const item = (items.data ?? []).find((i) => i.name.toLowerCase() === product.trim().toLowerCase());
+  const input = 'h-9 w-full bg-transparent px-2 text-[13px] font-semibold text-[#1f3f8f] outline-none placeholder:font-normal placeholder:text-ink-400 focus:bg-amber-50 focus:ring-2 focus:ring-ink-900 focus:ring-inset';
+
+  const save = async () => {
+    if (!item) return toast.error('Producto', 'Escriba el producto tal como está en el inventario (aparece la lista al escribir).');
+    const m = parseSheetText(amount, { unit: smallUnit(item.base_unit), base_unit: item.base_unit, pack_size_m: item.pack_size_m, pack_label: item.pack_label });
+    if (!m || Number.isNaN(m)) return toast.error('Cantidad', 'Escriba la cantidad como en la hoja: 100 gramos, 2 und, 1 paq.');
+    if (reason.trim().length < 3) return toast.error('Motivo', 'Escriba el motivo de la baja.');
+    setBusy(true);
+    try {
+      await api.post('/wastes', { item_id: item.id, qty: m / 1000, unit: smallUnit(item.base_unit), reason: reasonFrom(reason), note: reason.trim(), photo });
+      toast.success('Baja anotada', `${item.name}: queda para que el administrador la autorice.`);
+      setProduct('');
+      setAmount('');
+      setReason('');
+      setPhoto(null);
+      onSaved();
+    } catch (e) {
+      toast.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <tr className="bg-amber-50/30 print:hidden">
+      <td className={cx(TD, 'text-center tabular-nums')}>{dayHead(localDate())}</td>
+      <td className={cx(TD, 'p-0')}>
+        <input className={input} list="baja-productos" value={product} onChange={(e) => setProduct(e.target.value)} placeholder="producto" aria-label="Producto" />
+        <datalist id="baja-productos">
+          {(items.data ?? []).map((i) => (
+            <option key={i.id} value={i.name} />
+          ))}
+        </datalist>
+      </td>
+      <td className={cx(TD, 'p-0')}>
+        <input className={cx(input, 'text-center')} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={item ? `100 ${UNIT_SHORT[smallUnit(item.base_unit)]}` : 'cantidad'} aria-label="Cantidad" />
+      </td>
+      <td className={cx(TD, 'p-0')}>
+        <input className={input} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="motivo de la baja" aria-label="Motivo de la baja" />
+      </td>
+      <td className={cx(TD, 'uppercase')}>{user.name}</td>
+      <td className={cx(TD, 'text-center')}>
+        <span className="flex items-center justify-center gap-1">
+          <label className={cx('inline-flex cursor-pointer items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-bold', photo ? 'border-emerald-600 text-emerald-700' : 'border-ink-400 text-ink-700')} title="Foto de evidencia">
+            <Camera className="size-3.5" /> {photo ? 'Foto ✓' : 'Foto'}
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="sr-only"
+              onChange={async (e) => {
+                const f = e.target.files?.[0];
+                if (f) setPhoto(await compressPhoto(f).catch(() => null));
+              }}
+            />
+          </label>
+          <button className="rounded-md bg-ink-900 px-2 py-1 text-[11px] font-bold text-white disabled:opacity-50" disabled={busy} onClick={() => void save()}>
+            {busy ? <Loader2 className="size-3 animate-spin" /> : 'Guardar'}
+          </button>
+        </span>
+      </td>
+    </tr>
+  );
+}
+
+
+export function BajasSheet(_props: { onFlow?: (f: Flow) => void }) {
   const { can, bump } = useApp();
   const toast = useToast();
   const admin = can('kitchen.manage');
@@ -605,11 +851,6 @@ export function BajasSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
       subtitle={`Semana del ${shortDate(from)} al ${shortDate(to)}`}
       nav={<WeekNav from={from} setDate={setDate} />}
       note="Nota: toda baja entregada debe estar autorizada por el administrador con evidencia de fotografía"
-      actions={
-        <button className="btn-primary btn-sm" onClick={() => onFlow({ kind: 'baja' })}>
-          <Plus className="size-4" /> Registrar baja
-        </button>
-      }
     >
       {wastes.error ? (
         <ErrorBox message={wastes.error} onRetry={wastes.reload} />
@@ -663,6 +904,8 @@ export function BajasSheet({ onFlow }: { onFlow: (f: Flow) => void }) {
                   </td>
                 </tr>
               ))}
+              {/* El renglón para escribir una baja nueva (solo en la semana de hoy). */}
+              {can('kitchen.report') && from <= today && today <= to && <NewWasteRow onSaved={bump} />}
               {/* Renglones vacíos, como en el formato impreso. */}
               {Array.from({ length: empty }, (_, i) => (
                 <tr key={`v${i}`}>

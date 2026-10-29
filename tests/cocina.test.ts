@@ -82,13 +82,14 @@ test('13. una preparación descuenta el insumo, suma el resultado y calcula merm
   assert.equal(qty(db, k.cebolla.id), 2_000_000);
   assert.equal(qty(db, k.picada.id), 1_700_000);
 
-  // Si no alcanza la cebolla, no se registra nada.
-  assert.throws(() => preps.registerProduction(db, cook, { preparation_id: k.pica.id, input_qty: 3, input_unit: 'kg', output_qty: 2, output_unit: 'kg' }), /No alcanza/);
-  assert.equal(qty(db, k.cebolla.id), 2_000_000);
+  // Si el sistema cree que no alcanza, se anota igual (manda lo que escribió la cocina) y queda en cero, nunca negativo.
+  preps.registerProduction(db, cook, { preparation_id: k.pica.id, input_qty: 3, input_unit: 'kg', output_qty: 2, output_unit: 'kg' });
+  assert.equal(qty(db, k.cebolla.id), 0);
+  assert.equal(qty(db, k.picada.id), 3_700_000);
 
-  // Anular devuelve todo.
+  // Anular devuelve lo que usó esa preparación.
   preps.annulProduction(db, admin, p.id, { reason: 'Se registró dos veces' });
-  assert.equal(qty(db, k.cebolla.id), 3_000_000);
+  assert.equal(qty(db, k.cebolla.id), 1_000_000);
   assert.equal(qty(db, k.caramelizada.id), 0);
   // Cada existencia sigue siendo la suma de sus movimientos.
   for (const it of inv.listItems(db)) {

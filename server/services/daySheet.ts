@@ -53,19 +53,26 @@ function dayMoves(db: DB, date: string): Map<number, DayMoves> {
   const rows = db
     .prepare(
       `SELECT item_id, type, SUM(CASE WHEN delta_m > 0 THEN delta_m ELSE 0 END) pos, SUM(CASE WHEN delta_m < 0 THEN -delta_m ELSE 0 END) neg
-       FROM movements WHERE created_at >= ? AND created_at < ? AND type IN ('entrada','produccion') GROUP BY item_id, type`,
+       FROM movements WHERE created_at >= ? AND created_at < ? AND type = 'entrada' GROUP BY item_id, type`,
     )
     .all(dayStartIso(date), dayStartIso(addDays(date, 1))) as { item_id: number; type: string; pos: number; neg: number }[];
   const out = new Map<number, DayMoves>();
   const get = (id: number) => out.get(id) ?? (out.set(id, { entries_m: 0, produced_m: 0, used_m: 0, waste_m: 0 }), out.get(id)!);
   for (const r of rows) {
-    const m = get(r.item_id);
-    if (r.type === 'entrada') m.entries_m += r.pos - r.neg;
-    else {
-      m.produced_m += r.pos;
-      m.used_m += r.neg;
-    }
+    get(r.item_id).entries_m += r.pos - r.neg;
   }
+  // Lo preparado y lo usado en preparaciones, tal como se anotó en las hojas de merma y masa.
+  const produced = db.prepare("SELECT output_item_id item_id, SUM(output_m) qty FROM productions WHERE local_date = ? AND status = 'activa' GROUP BY output_item_id").all(date) as {
+    item_id: number;
+    qty: number;
+  }[];
+  for (const p of produced) get(p.item_id).produced_m += p.qty;
+  const usedRows = db
+    .prepare(
+      "SELECT i.item_id, SUM(i.qty_m) qty FROM production_inputs i JOIN productions p ON p.id = i.production_id WHERE p.local_date = ? AND p.status = 'activa' GROUP BY i.item_id",
+    )
+    .all(date) as { item_id: number; qty: number }[];
+  for (const u of usedRows) get(u.item_id).used_m += u.qty;
   // Bajas del día en que se reportaron (lo que salió de la nevera), menos las rechazadas.
   const wastes = db.prepare("SELECT item_id, SUM(qty_m) qty FROM wastes WHERE local_date = ? AND status <> 'rechazada' GROUP BY item_id").all(date) as {
     item_id: number;

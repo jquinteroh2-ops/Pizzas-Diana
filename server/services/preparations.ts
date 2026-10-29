@@ -323,15 +323,6 @@ export function registerProduction(db: DB, user: User, body: Record<string, unkn
   const baseUsed = used.find((u) => u.itemId === prep.inputs[0].item_id)!.qtyM;
   const expected = scaleBatch(prep.inputs, prep.std_output_m, baseUsed).expectedM;
 
-  // Primero se valida que alcance todo, para dar un mensaje claro y no a medias.
-  const short = used.filter((u) => (db.prepare('SELECT qty_m FROM items WHERE id = ?').get(u.itemId) as { qty_m: number }).qty_m < u.qtyM);
-  if (short.length) {
-    throw conflict(
-      `No alcanza ${short.map((s) => s.name).join(', ')} según el inventario. Si sí hay, avisa al administrador para que corrija la existencia.`,
-      { items: short.map((s) => s.itemId) },
-    );
-  }
-
   const at = opts.at ?? nowIso();
   const day = localDate(new Date(at));
   const isDemo = opts.isDemo ?? isDemoMode(db);
@@ -346,7 +337,10 @@ export function registerProduction(db: DB, user: User, body: Record<string, unkn
     const insInput = db.prepare('INSERT INTO production_inputs(production_id, item_id, item_name, qty_m) VALUES (?,?,?,?)');
     for (const u of used) {
       insInput.run(id, u.itemId, u.name, u.qtyM);
-      applyMovement(db, { itemId: u.itemId, delta: -u.qtyM, type: 'produccion', reason: `Se usó para ${prep.name} (#${id})`, userId: user.id, at, isDemo });
+      // Lo anotado en la hoja manda: si el sistema cree que hay menos, se descuenta lo que haya
+      // (la diferencia se corrige al validar el día con lo que se contó).
+      const take = Math.min(u.qtyM, (db.prepare('SELECT qty_m FROM items WHERE id = ?').get(u.itemId) as { qty_m: number }).qty_m);
+      if (take > 0) applyMovement(db, { itemId: u.itemId, delta: -take, type: 'produccion', reason: `Se usó para ${prep.name} (#${id})`, userId: user.id, at, isDemo });
     }
     applyMovement(db, { itemId: output.id, delta: outQ.qtyM, type: 'produccion', reason: `Preparación #${id}`, userId: user.id, at, isDemo });
     // Marca como hecha la tarea del plan de hoy para esta preparación, si había.

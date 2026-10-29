@@ -151,9 +151,9 @@ export default function HojaDia() {
               Esta hoja ya se validó: se puede consultar pero no cambiar. Para corregirla, el administrador la vuelve a abrir en «Validar con caja».
             </p>
           )}
-          {tab === 'inventario' && <InventoryTab sheet={live} lines={lines} onLine={onLine} onSheet={onSheet} />}
-          {tab === 'preparaciones' && <PrepTab onFlow={setFlow} editable={live.editable && date === today} />}
-          {tab === 'bajas' && <BajasSheet onFlow={setFlow} />}
+          {tab === 'inventario' && <InventoryTab sheet={live} lines={lines} onLine={onLine} />}
+          {tab === 'preparaciones' && <PrepTab />}
+          {tab === 'bajas' && <BajasSheet />}
           {tab === 'pedido' && <OrderTab onFlow={setFlow} />}
           {tab === 'validar' && <ValidateTab sheet={live} lines={lines} onSheet={onSheet} />}
         </div>
