@@ -83,7 +83,8 @@ import {
 } from '../../shared/daySheet.ts';
 import { ApiError } from './api';
 
-const STORAGE_KEY = 'pizza_diana_client_db_v5';
+// v6: se empieza con la hoja en blanco (los productos de la hoja de papel, sin datos de prueba).
+const STORAGE_KEY = 'pizza_diana_client_db_v6';
 const LEGACY_KEY = 'pizza_diana_client_db_v4';
 
 /** Usuarios para probar cada rol en la demostración. */
@@ -385,9 +386,9 @@ class BrowserDB {
         return migrated;
       }
     } catch {
-      // Datos dañados: se empieza de nuevo con la demostración.
+      // Datos dañados: se empieza de nuevo.
     }
-    const fresh = buildDemoState();
+    const fresh = buildBlankState();
     this.persist(fresh);
     return fresh;
   }
@@ -2151,7 +2152,19 @@ class BrowserDB {
         id[c.key] = found.id;
         return;
       }
-      id[c.key] = this.createItem(admin, { name: c.name, category: c.category, unit: c.unit, qty: 0, min: c.min, location: c.location, kind: c.kind, sort_order: (idx + 1) * 10 }).id;
+      id[c.key] = this.createItem(admin, {
+        name: c.name,
+        category: c.category,
+        unit: c.unit,
+        qty: 0,
+        min: c.min,
+        location: c.location,
+        kind: c.kind,
+        sort_order: (idx + 1) * 10,
+        pack_size: c.pack?.[0] ?? null,
+        pack_unit: c.pack ? (c.unit === 'kg' ? 'g' : c.unit === 'l' ? 'ml' : c.unit) : undefined,
+        pack_label: c.pack?.[1],
+      }).id;
       items++;
     });
     let preparations = 0;
@@ -2217,6 +2230,33 @@ const WEEK_PLAN: Record<number, string[]> = {
  * Arma la demostración llamando a las MISMAS funciones que usa la aplicación
  * (ventas, preparaciones, bajas, conteos), con fechas pasadas.
  */
+/**
+ * Arranque en blanco: los tres usuarios de prueba, los productos de la hoja de papel (en su
+ * orden y con existencia 0), las preparaciones y el menú con sus recetas. Sin ventas ni días
+ * anteriores: la cocina llena la hoja desde cero.
+ */
+function buildBlankState(): State {
+  const db = Object.create(BrowserDB.prototype) as BrowserDB;
+  db.state = emptyState();
+  const at = nowIso();
+  const names: Record<Role, string> = { admin: 'Diana (Administradora)', caja: 'Laura (Caja)', cocina: 'Jefe de cocina' };
+  db.state.users = DEMO_LOGINS.map((d, i) => ({
+    id: i + 1,
+    username: d.username,
+    name: names[d.role],
+    role: d.role,
+    perms: [],
+    active: true,
+    is_demo: false,
+    created_at: at,
+    updated_at: at,
+    password: d.password,
+  }));
+  db.state.seq.user = db.state.users.length + 1;
+  db.loadCatalog(db.state.users[0]);
+  return db.state;
+}
+
 function buildDemoState(keepUsers?: UserRec[]): State {
   const db = Object.create(BrowserDB.prototype) as BrowserDB;
   db.state = emptyState();
@@ -2272,9 +2312,9 @@ function buildDemoState(keepUsers?: UserRec[]): State {
         location: c.location,
         kind: c.kind,
         sort_order: (idx + 1) * 10,
-        pack_size: c.demoPack?.[0] ?? null,
-        pack_unit: c.demoPack ? (c.unit === 'kg' ? 'g' : c.unit === 'l' ? 'ml' : c.unit) : undefined,
-        pack_label: c.demoPack?.[1],
+        pack_size: c.pack?.[0] ?? null,
+        pack_unit: c.pack ? (c.unit === 'kg' ? 'g' : c.unit === 'l' ? 'ml' : c.unit) : undefined,
+        pack_label: c.pack?.[1],
       },
       { at: t0, ...demo },
     ).id;

@@ -108,9 +108,9 @@ export function loadDemo(db: DB, admin: User, now = new Date()) {
           location: c.location,
           kind: c.kind,
           sort_order: (idx + 1) * 10,
-          pack_size: c.demoPack?.[0] ?? null,
-          pack_unit: c.demoPack ? (c.unit === 'kg' ? 'g' : c.unit === 'l' ? 'ml' : c.unit) : undefined,
-          pack_label: c.demoPack?.[1],
+          pack_size: c.pack?.[0] ?? null,
+          pack_unit: c.pack ? (c.unit === 'kg' ? 'g' : c.unit === 'l' ? 'ml' : c.unit) : undefined,
+          pack_label: c.pack?.[1],
         },
         { at: t0 },
       ).id;
