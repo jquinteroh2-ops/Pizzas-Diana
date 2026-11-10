@@ -1,0 +1,23 @@
+# Despliegue en Render (https://render.com) como «Blueprint».
+# En Render: New → Blueprint → elegir este repositorio. Render lee este archivo y crea el servicio.
+#
+# Plan GRATIS. Los datos NO se guardan en el disco de Render (en el plan gratis se borra):
+# viven en una base PostgreSQL gratuita de Neon (https://neon.tech). La dirección de esa base
+# va en la variable DATABASE_URL, que se escribe a mano en Render (Environment) porque lleva
+# la contraseña: nunca se guarda en el repositorio.
+services:
+  - type: web
+    name: pizza-diana
+    runtime: node
+    plan: free
+    # Con NODE_ENV=production npm no instala TypeScript ni Vite, que hacen falta para compilar.
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/session
+    envVars:
+      - key: NODE_VERSION
+        value: '24'
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false

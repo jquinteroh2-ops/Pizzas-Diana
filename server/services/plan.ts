@@ -31,20 +31,20 @@ function ymd(v: unknown, field = 'fecha'): string {
   return v;
 }
 
-export function tasksBetween(db: DB, from: string, to: string): PrepTask[] {
-  return db.prepare(`${SELECT} WHERE t.local_date BETWEEN ? AND ? ORDER BY t.local_date, t.id`).all(from, to) as unknown as PrepTask[];
+export async function tasksBetween(db: DB, from: string, to: string): Promise<PrepTask[]> {
+  return await db.prepare(`${SELECT} WHERE t.local_date BETWEEN ? AND ? ORDER BY t.local_date, t.id`).all(from, to) as unknown as PrepTask[];
 }
 
-export function weekPlan(db: DB, date: unknown) {
+export async function weekPlan(db: DB, date: unknown) {
   const d = date === undefined ? localDate() : ymd(date);
   const from = weekStart(d);
   const to = weekEnd(d);
-  return { from, to, tasks: tasksBetween(db, from, to) };
+  return { from, to, tasks: await tasksBetween(db, from, to) };
 }
 
-export function addTask(db: DB, user: User, body: Record<string, unknown>): PrepTask {
+export async function addTask(db: DB, user: User, body: Record<string, unknown>): Promise<PrepTask> {
   const day = ymd(body.date);
-  const prep = db
+  const prep = await db
     .prepare('SELECT p.id, p.name, p.active, i.unit FROM preparations p JOIN items i ON i.id = p.output_item_id WHERE p.id = ?')
     .get(Number(body.preparation_id)) as { id: number; name: string; active: number; unit: Unit } | undefined;
   if (!prep) throw bad('Elige qué se va a preparar.');
@@ -56,41 +56,41 @@ export function addTask(db: DB, user: User, body: Record<string, unknown>): Prep
     target = toMilli(num(body.target_qty, 'cantidad objetivo', { allowZero: false, max: 1e7 }), unit);
   }
   const note = optStr(body.note, 'nota', 200);
-  const r = db
+  const r = await db
     .prepare('INSERT INTO prep_tasks(local_date, preparation_id, target_m, note, created_by, created_at, is_demo) VALUES (?,?,?,?,?,?,?)')
-    .run(day, prep.id, target, note, user.id, nowIso(), isDemoMode(db) ? 1 : 0);
-  return getTask(db, Number(r.lastInsertRowid));
+    .run(day, prep.id, target, note, user.id, nowIso(), await isDemoMode(db) ? 1 : 0);
+  return await getTask(db, Number(r.lastInsertRowid));
 }
 
-export function getTask(db: DB, id: number): PrepTask {
-  const t = db.prepare(`${SELECT} WHERE t.id = ?`).get(id) as PrepTask | undefined;
+export async function getTask(db: DB, id: number): Promise<PrepTask> {
+  const t = await db.prepare(`${SELECT} WHERE t.id = ?`).get(id) as PrepTask | undefined;
   if (!t) throw notFound('Tarea no encontrada.');
   return t;
 }
 
-export function deleteTask(db: DB, id: number): { ok: true } {
-  const t = getTask(db, id);
+export async function deleteTask(db: DB, id: number): Promise<{ ok: true }> {
+  const t = await getTask(db, id);
   if (t.production_id) throw bad('Esta tarea ya se hizo; no se puede quitar del plan.');
-  db.prepare('DELETE FROM prep_tasks WHERE id = ?').run(id);
+  await db.prepare('DELETE FROM prep_tasks WHERE id = ?').run(id);
   return { ok: true };
 }
 
 /** Copia el plan de la semana anterior a la semana de `date` (sin duplicar lo que ya esté). */
-export function copyPreviousWeek(db: DB, user: User, date: unknown) {
+export async function copyPreviousWeek(db: DB, user: User, date: unknown) {
   const d = ymd(date);
   const from = weekStart(d);
-  const prev = tasksBetween(db, addDays(from, -7), addDays(from, -1));
+  const prev = await tasksBetween(db, addDays(from, -7), addDays(from, -1));
   if (prev.length === 0) throw bad('La semana anterior no tiene plan para copiar.');
-  return tx(db, () => {
+  return await tx(db, async () => {
     const exists = db.prepare('SELECT 1 FROM prep_tasks WHERE local_date = ? AND preparation_id = ?');
     const ins = db.prepare('INSERT INTO prep_tasks(local_date, preparation_id, target_m, note, created_by, created_at, is_demo) VALUES (?,?,?,?,?,?,?)');
     let added = 0;
     for (const t of prev) {
       const day = addDays(t.local_date, 7);
-      if (exists.get(day, t.preparation_id)) continue;
-      ins.run(day, t.preparation_id, t.target_m, t.note, user.id, nowIso(), isDemoMode(db) ? 1 : 0);
+      if (await exists.get(day, t.preparation_id)) continue;
+      await ins.run(day, t.preparation_id, t.target_m, t.note, user.id, nowIso(), await isDemoMode(db) ? 1 : 0);
       added++;
     }
-    return { added, ...weekPlan(db, d) };
+    return { added, ...await weekPlan(db, d) };
   });
 }

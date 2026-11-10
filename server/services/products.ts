@@ -1,4 +1,4 @@
-import { type DB, nowIso, tx, isDemoMode } from '../db.ts';
+import { type DB, nowIso, tx, isDemoMode, mapAsync } from '../db.ts';
 import { bad, conflict, notFound, num, oneOf, optStr, str } from '../errors.ts';
 import { compatible, isUnit, toMilli, type BaseUnit, type Unit } from '../../shared/units.ts';
 
@@ -42,18 +42,18 @@ interface ProductRow {
   updated_at: string;
 }
 
-function recipeOf(db: DB, productId: number): RecipeLine[] {
-  const rows = db
+async function recipeOf(db: DB, productId: number): Promise<RecipeLine[]> {
+  const rows = await db
     .prepare(
       `SELECT r.item_id, i.name item_name, i.base_unit, i.unit item_unit, i.active item_active, r.unit, r.qty_m
-       FROM recipe_lines r JOIN items i ON i.id = r.item_id WHERE r.product_id = ? ORDER BY i.name COLLATE NOCASE`,
+       FROM recipe_lines r JOIN items i ON i.id = r.item_id WHERE r.product_id = ? ORDER BY lower(i.name)`,
     )
     .all(productId) as unknown as (Omit<RecipeLine, 'item_active'> & { item_active: number })[];
   return rows.map((r) => ({ ...r, item_active: !!r.item_active }));
 }
 
-function toProduct(db: DB, r: ProductRow): Product {
-  const recipe = recipeOf(db, r.id);
+async function toProduct(db: DB, r: ProductRow): Promise<Product> {
+  const recipe = await recipeOf(db, r.id);
   const warnings: string[] = [];
   if (recipe.length === 0) {
     warnings.push(r.type === 'directo' ? 'No está enlazado a un artículo de inventario.' : 'No tiene receta configurada.');
@@ -62,15 +62,15 @@ function toProduct(db: DB, r: ProductRow): Product {
   return { ...r, active: !!r.active, is_demo: !!r.is_demo, recipe, warnings };
 }
 
-export function listProducts(db: DB): Product[] {
-  const rows = db.prepare('SELECT * FROM products ORDER BY active DESC, category, name COLLATE NOCASE').all() as unknown as ProductRow[];
-  return rows.map((r) => toProduct(db, r));
+export async function listProducts(db: DB): Promise<Product[]> {
+  const rows = await db.prepare('SELECT * FROM products ORDER BY active DESC, category, lower(name)').all() as unknown as ProductRow[];
+  return await mapAsync(rows, async (r) => await toProduct(db, r));
 }
 
-export function getProduct(db: DB, id: number): Product {
-  const r = db.prepare('SELECT * FROM products WHERE id = ?').get(id) as ProductRow | undefined;
+export async function getProduct(db: DB, id: number): Promise<Product> {
+  const r = await db.prepare('SELECT * FROM products WHERE id = ?').get(id) as ProductRow | undefined;
   if (!r) throw notFound('Producto no encontrado.');
-  return toProduct(db, r);
+  return await toProduct(db, r);
 }
 
 interface LineInput {
@@ -79,14 +79,14 @@ interface LineInput {
   unit: Unit;
 }
 
-function validRecipe(db: DB, raw: unknown, type: ProductType): LineInput[] {
+async function validRecipe(db: DB, raw: unknown, type: ProductType): Promise<LineInput[]> {
   if (raw === undefined || raw === null) return [];
   if (!Array.isArray(raw)) throw bad('La receta no es válida.');
   const seen = new Set<number>();
   const lines: LineInput[] = [];
   for (const l of raw as Record<string, unknown>[]) {
     const itemId = Number(l?.item_id);
-    const item = db.prepare('SELECT id, name, unit, active FROM items WHERE id = ?').get(itemId) as
+    const item = await db.prepare('SELECT id, name, unit, active FROM items WHERE id = ?').get(itemId) as
       | { id: number; name: string; unit: Unit; active: number }
       | undefined;
     if (!item) throw bad('Un ingrediente de la receta no existe en el inventario.');
@@ -104,29 +104,29 @@ function validRecipe(db: DB, raw: unknown, type: ProductType): LineInput[] {
   return lines;
 }
 
-function saveRecipe(db: DB, productId: number, lines: LineInput[]) {
-  db.prepare('DELETE FROM recipe_lines WHERE product_id = ?').run(productId);
+async function saveRecipe(db: DB, productId: number, lines: LineInput[]) {
+  await db.prepare('DELETE FROM recipe_lines WHERE product_id = ?').run(productId);
   const ins = db.prepare('INSERT INTO recipe_lines(product_id, item_id, qty_m, unit) VALUES (?,?,?,?)');
-  for (const l of lines) ins.run(productId, l.itemId, l.qtyM, l.unit);
+  for (const l of lines) await ins.run(productId, l.itemId, l.qtyM, l.unit);
 }
 
-export function createProduct(db: DB, body: Record<string, unknown>): Product {
+export async function createProduct(db: DB, body: Record<string, unknown>): Promise<Product> {
   const name = str(body.name, 'nombre', { max: 80 });
   const category = str(body.category, 'categoría', { max: 40 });
   const description = optStr(body.description, 'descripción', 300);
   const type = oneOf(body.type, 'tipo de producto', ['preparado', 'directo'] as const);
-  const lines = validRecipe(db, body.recipe, type);
-  if (db.prepare('SELECT 1 FROM products WHERE name = ? COLLATE NOCASE AND active = 1').get(name)) {
+  const lines = await validRecipe(db, body.recipe, type);
+  if (await db.prepare('SELECT 1 FROM products WHERE lower(name) = lower(?) AND active = 1').get(name)) {
     throw conflict(`Ya existe un producto activo llamado "${name}".`);
   }
-  return tx(db, () => {
+  return await tx(db, async () => {
     const now = nowIso();
-    const r = db
+    const r = await db
       .prepare('INSERT INTO products(name, category, description, type, is_demo, created_at, updated_at) VALUES (?,?,?,?,?,?,?)')
-      .run(name, category, description, type, isDemoMode(db) ? 1 : 0, now, now);
+      .run(name, category, description, type, await isDemoMode(db) ? 1 : 0, now, now);
     const id = Number(r.lastInsertRowid);
-    saveRecipe(db, id, lines);
-    return getProduct(db, id);
+    await saveRecipe(db, id, lines);
+    return await getProduct(db, id);
   });
 }
 
@@ -134,18 +134,18 @@ export function createProduct(db: DB, body: Record<string, unknown>): Product {
  * Editar un producto o su receta. Las ventas anteriores no cambian porque cada
  * venta guarda su propia copia de las cantidades aplicadas.
  */
-export function updateProduct(db: DB, id: number, body: Record<string, unknown>): Product {
-  const p = getProduct(db, id);
+export async function updateProduct(db: DB, id: number, body: Record<string, unknown>): Promise<Product> {
+  const p = await getProduct(db, id);
   const name = body.name === undefined ? p.name : str(body.name, 'nombre', { max: 80 });
   const category = body.category === undefined ? p.category : str(body.category, 'categoría', { max: 40 });
   const description = body.description === undefined ? p.description : optStr(body.description, 'descripción', 300);
   const type = body.type === undefined ? p.type : oneOf(body.type, 'tipo de producto', ['preparado', 'directo'] as const);
-  const lines = body.recipe === undefined ? null : validRecipe(db, body.recipe, type);
-  if (db.prepare('SELECT 1 FROM products WHERE name = ? COLLATE NOCASE AND active = 1 AND id <> ?').get(name, id)) {
+  const lines = body.recipe === undefined ? null : await validRecipe(db, body.recipe, type);
+  if (await db.prepare('SELECT 1 FROM products WHERE lower(name) = lower(?) AND active = 1 AND id <> ?').get(name, id)) {
     throw conflict(`Ya existe un producto activo llamado "${name}".`);
   }
-  return tx(db, () => {
-    db.prepare('UPDATE products SET name=?, category=?, description=?, type=?, updated_at=? WHERE id=?').run(
+  return await tx(db, async () => {
+    await db.prepare('UPDATE products SET name=?, category=?, description=?, type=?, updated_at=? WHERE id=?').run(
       name,
       category,
       description,
@@ -153,13 +153,13 @@ export function updateProduct(db: DB, id: number, body: Record<string, unknown>)
       nowIso(),
       id,
     );
-    if (lines) saveRecipe(db, id, lines);
-    return getProduct(db, id);
+    if (lines) await saveRecipe(db, id, lines);
+    return await getProduct(db, id);
   });
 }
 
-export function setProductActive(db: DB, id: number, active: boolean): Product {
-  getProduct(db, id);
-  db.prepare('UPDATE products SET active=?, updated_at=? WHERE id=?').run(active ? 1 : 0, nowIso(), id);
-  return getProduct(db, id);
+export async function setProductActive(db: DB, id: number, active: boolean): Promise<Product> {
+  await getProduct(db, id);
+  await db.prepare('UPDATE products SET active=?, updated_at=? WHERE id=?').run(active ? 1 : 0, nowIso(), id);
+  return await getProduct(db, id);
 }

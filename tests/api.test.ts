@@ -10,7 +10,7 @@ let server: Server;
 let base = '';
 
 before(async () => {
-  const app = createApp(openDb(':memory:'));
+  const app = createApp(await openDb(':memory:'));
   await new Promise<void>((r) => {
     server = app.listen(0, () => r());
   });
@@ -81,7 +81,6 @@ test('12. permisos: la caja no puede ejecutar acciones de administrador', async 
     ['POST', `/api/sales/${sale.body.sale.id}/annul`, { reason: 'quiero' }],
     ['GET', '/api/dashboard'],
     ['GET', '/api/reports?period=dia'],
-    ['POST', '/api/settings/demo/load', {}],
   ];
   for (const [m, p, b] of forbidden) {
     assert.equal((await emp(m, p, b)).status, 403, `${m} ${p} debería estar prohibido`);

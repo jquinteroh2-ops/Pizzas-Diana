@@ -1,8 +1,6 @@
 // Cliente de la API. Toda la comunicación con el servidor pasa por aquí.
 // La sesión viaja en una cookie httpOnly, así que el token nunca es accesible desde JavaScript.
 
-import { handleBrowserRequest } from './browserStorage';
-
 export class ApiError extends Error {
   status: number;
   details?: unknown;
@@ -22,22 +20,7 @@ export const onUnauthorized = (fn: Listener) => {
   };
 };
 
-/** En GitHub Pages no hay servidor: los datos viven en este navegador. */
-export function isStaticHost(): boolean {
-  return (
-    typeof window !== 'undefined' &&
-    (window.location.hostname.endsWith('github.io') ||
-      window.location.hostname.includes('pages.dev') ||
-      window.location.protocol === 'file:' ||
-      (window as unknown as { __MOCK_API__?: boolean }).__MOCK_API__ === true)
-  );
-}
-
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  if (isStaticHost()) {
-    return handleBrowserRequest<T>(method, path, body as Record<string, unknown>);
-  }
-
   let res: Response;
   try {
     res = await fetch('/api' + path, {
@@ -49,10 +32,6 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   } catch {
     // Sin conexión NO se guarda en el navegador: el registro se perdería sin que nadie lo note.
     throw new ApiError(0, 'No hay conexión con el servidor. Revisa el wifi o los datos e inténtalo de nuevo; no se guardó nada.');
-  }
-  // Publicado en un hosting estático sin servidor (responde la página en lugar de la API).
-  if (res.status === 404 && res.headers.get('content-type')?.includes('text/html')) {
-    return handleBrowserRequest<T>(method, path, body as Record<string, unknown>);
   }
   const text = await res.text();
   let data: unknown = null;
