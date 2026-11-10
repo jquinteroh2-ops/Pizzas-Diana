@@ -8,6 +8,7 @@ export interface Measure {
   base_unit: BaseUnit;
   pack_size_m: number;
   pack_label: string;
+  unit_size_m?: number;
 }
 
 /** «paq» para paquete (como se escribe en la hoja); los demás nombres tal cual. */
@@ -17,14 +18,14 @@ export function packWord(label: string): string {
 
 /** Unidad de lo suelto: con paquetes, la pequeña (g, ml, und); sin paquetes, la que eligió la cocina. */
 export function looseUnit(m: Measure): Unit {
-  return m.pack_size_m > 0 ? smallUnit(m.base_unit) : m.unit;
+  return m.pack_size_m > 0 || (m.unit_size_m ?? 0) > 0 ? smallUnit(m.base_unit) : m.unit;
 }
 
 export function qtyText(milli: number | null | undefined, m: Measure): string {
   if (milli === null || milli === undefined) return '';
   // En gramos y mililitros no se muestran centésimas: «414,96 g» → «415 g».
   if (m.base_unit !== 'unidad') milli = Math.round(milli / 1000) * 1000;
-  if (m.pack_size_m > 0 && milli >= 0) return formatPacks(milli, m.pack_size_m, packWord(m.pack_label), m.unit) ?? '';
+  if ((m.pack_size_m > 0 || (m.unit_size_m ?? 0) > 0) && milli >= 0) return formatPacks(milli, m.pack_size_m, packWord(m.pack_label), m.unit, m.unit_size_m ?? 0) ?? '';
   return formatQty(milli, m.unit);
 }
 
@@ -39,8 +40,12 @@ export function signedText(milli: number, m: Measure): string {
 
 /** «paquete de 1 kg», «bolsa de 10 und» (para mostrar junto al nombre). */
 export function packDescription(m: Measure): string {
-  if (m.pack_size_m <= 0) return '';
+  const us = m.unit_size_m ?? 0;
+  const each = us > 0 ? `1 und = ${formatQty(us, smallUnit(m.base_unit))}` : '';
+  if (m.pack_size_m <= 0) return each;
   const u = smallUnit(m.base_unit);
+  // Paquete contado en unidades: «paquete de 6 und (192 g)».
+  if (us > 0 && m.pack_size_m % us === 0) return `${m.pack_label || 'paquete'} de ${m.pack_size_m / us} und (${formatQty(m.pack_size_m, u)})`;
   const size = m.base_unit !== 'unidad' && m.pack_size_m >= 1_000_000 && m.pack_size_m % 1_000_000 === 0 ? formatQty(m.pack_size_m, m.base_unit === 'g' ? 'kg' : 'l') : formatQty(m.pack_size_m, u);
   return `${m.pack_label || 'paquete'} de ${size}`;
 }

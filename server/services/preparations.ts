@@ -6,7 +6,7 @@ import { baseOf, compatible, isUnit, toMilli, type BaseUnit, type Unit } from '.
 import { PREP_MODES, productionYield, scaleBatch, type PrepMode } from '../../shared/kitchen.ts';
 import { localDate } from '../../shared/dates.ts';
 import { applyMovement } from './inventory.ts';
-import type { User } from './users.ts';
+import { can, type User } from './users.ts';
 
 export interface PrepInput {
   item_id: number;
@@ -356,6 +356,8 @@ export async function registerProduction(db: DB, user: User, body: Record<string
 export async function annulProduction(db: DB, user: User, id: number, body: Record<string, unknown>): Promise<ProductionView> {
   const p = await getProduction(db, id);
   if (p.status === 'anulada') throw conflict('Esta preparación ya fue anulada.');
+  // La jefa de cocina corrige lo de hoy desde la hoja; lo de días anteriores lo anula el administrador.
+  if (!can(user, 'kitchen.manage') && p.local_date !== localDate()) throw conflict('Solo el administrador puede anular lo de días anteriores.');
   const reason = str(body.reason, 'motivo', { min: 3, max: 200 });
   const at = nowIso();
   return await tx(db, async () => {

@@ -36,6 +36,8 @@ export interface Item {
   location: Location;
   pack_size_m: number;
   pack_label: string;
+  /** Cuánto pesa (g) o mide (ml) una unidad, en milésimas; 0 = no se cuenta por unidades. */
+  unit_size_m: number;
   sort_order: number;
   active: boolean;
   is_demo: boolean;
@@ -65,17 +67,29 @@ export async function listItems(db: DB): Promise<Item[]> {
 function kitchenFields(body: Record<string, unknown>, unit: Unit, current?: Item) {
   const location = body.location === undefined ? (current?.location ?? 'Otro') : oneOf(body.location, 'ubicación', LOCATIONS);
   const kind = body.kind === undefined ? (current?.kind ?? 'insumo') : oneOf(body.kind, 'tipo', ITEM_KINDS);
+  // Algo que se pesa (butifarra, chorizo) también se puede contar por unidades si se sabe cuánto pesa una.
+  let unitSize = current?.unit_size_m ?? 0;
+  if (baseOf(unit) === 'unidad') unitSize = 0;
+  else if (body.unit_size === null || body.unit_size === '' || body.unit_size === 0) unitSize = 0;
+  else if (body.unit_size !== undefined) unitSize = toMilli(num(body.unit_size, `cuánto ${baseOf(unit) === 'ml' ? 'mide' : 'pesa'} una unidad`, { allowZero: false, max: 1e6 }), baseOf(unit) === 'ml' ? 'ml' : 'g');
   let packSize = current?.pack_size_m ?? 0;
   if (body.pack_size !== undefined && body.pack_size !== null && body.pack_size !== '') {
     const packUnit = body.pack_unit === undefined ? unit : unitOf(body.pack_unit);
-    if (!compatible(packUnit, unit)) throw bad('La unidad del paquete no es compatible con la del artículo.');
-    packSize = toMilli(num(body.pack_size, 'tamaño del paquete'), packUnit);
+    const qty = num(body.pack_size, 'tamaño del paquete');
+    // «Paquete de 6 unidades» en algo que se pesa: el paquete pesa 6 veces lo que pesa una unidad.
+    if (packUnit === 'unidad' && baseOf(unit) !== 'unidad') {
+      if (!unitSize) throw bad('Para contar el paquete por unidades, escribe cuánto pesa una unidad.');
+      packSize = Math.round(qty * unitSize);
+    } else {
+      if (!compatible(packUnit, unit)) throw bad('La unidad del paquete no es compatible con la del artículo.');
+      packSize = toMilli(qty, packUnit);
+    }
   } else if (body.pack_size === null || body.pack_size === '') {
     packSize = 0;
   }
   const packLabel = body.pack_label === undefined ? (current?.pack_label ?? '') : optStr(body.pack_label, 'nombre del paquete', 30);
   const sortOrder = body.sort_order === undefined ? (current?.sort_order ?? 0) : Math.round(num(body.sort_order, 'orden', { max: 100_000 }));
-  return { location, kind, packSize, packLabel: packSize > 0 ? packLabel || 'paquete' : '', sortOrder };
+  return { location, kind, packSize, packLabel: packSize > 0 ? packLabel || 'paquete' : '', sortOrder, unitSize };
 }
 
 export async function getItem(db: DB, id: number): Promise<Item> {
@@ -119,10 +133,10 @@ export async function createItem(db: DB, user: User, body: Record<string, unknow
   return await tx(db, async () => {
     const r = await db
       .prepare(
-        `INSERT INTO items(name, category, base_unit, unit, qty_m, min_m, kind, location, pack_size_m, pack_label, sort_order, is_demo, created_at, updated_at)
-         VALUES (?,?,?,?,0,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO items(name, category, base_unit, unit, qty_m, min_m, kind, location, pack_size_m, pack_label, sort_order, unit_size_m, is_demo, created_at, updated_at)
+         VALUES (?,?,?,?,0,?,?,?,?,?,?,?,?,?,?)`,
       )
-      .run(name, category, baseOf(unit), unit, toMilli(min, unit), k.kind, k.location, k.packSize, k.packLabel, k.sortOrder, demo, at, at);
+      .run(name, category, baseOf(unit), unit, toMilli(min, unit), k.kind, k.location, k.packSize, k.packLabel, k.sortOrder, k.unitSize, demo, at, at);
     const id = Number(r.lastInsertRowid);
     const qm = toMilli(qty, unit);
     if (qm > 0) await applyMovement(db, { itemId: id, delta: qm, type: 'inicial', reason: 'Existencia inicial', userId: user.id, at });
@@ -143,8 +157,8 @@ export async function updateItem(db: DB, id: number, body: Record<string, unknow
   const dup = await db.prepare('SELECT 1 FROM items WHERE lower(name) = lower(?) AND active = 1 AND id <> ?').get(name, id);
   if (dup) throw conflict(`Ya existe un artículo activo llamado "${name}".`);
   await db.prepare(
-    'UPDATE items SET name=?, category=?, unit=?, min_m=?, kind=?, location=?, pack_size_m=?, pack_label=?, sort_order=?, updated_at=? WHERE id=?',
-  ).run(name, category, unit, min, k.kind, k.location, k.packSize, k.packLabel, k.sortOrder, nowIso(), id);
+    'UPDATE items SET name=?, category=?, unit=?, min_m=?, kind=?, location=?, pack_size_m=?, pack_label=?, sort_order=?, unit_size_m=?, updated_at=? WHERE id=?',
+  ).run(name, category, unit, min, k.kind, k.location, k.packSize, k.packLabel, k.sortOrder, k.unitSize, nowIso(), id);
   return await getItem(db, id);
 }
 
@@ -167,7 +181,7 @@ export async function changeItemBase(db: DB, id: number, unit: Unit, perUnit: un
   // Cantidades que deben seguir siendo mayores que cero (recetas y bajas) no pueden quedar en 0.
   const rPos = (col: string) => `GREATEST(1, ${r(col)})`;
   await tx(db, async () => {
-    await db.prepare(`UPDATE items SET base_unit=?, unit=?, qty_m=${r('qty_m')}, min_m=${r('min_m')}, pack_size_m=${r('pack_size_m')}, updated_at=? WHERE id=?`).run(
+    await db.prepare(`UPDATE items SET base_unit=?, unit=?, qty_m=${r('qty_m')}, min_m=${r('min_m')}, pack_size_m=${r('pack_size_m')}, unit_size_m=0, updated_at=? WHERE id=?`).run(
       to,
       unit,
       nowIso(),

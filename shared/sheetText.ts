@@ -7,6 +7,8 @@ export interface SheetMeasure {
   base_unit: BaseUnit;
   pack_size_m: number;
   pack_label: string;
+  /** Cuánto pesa una unidad de algo que se pesa (butifarra): permite escribir «2 und». */
+  unit_size_m?: number;
 }
 
 const small = (b: BaseUnit): Unit => (b === 'g' ? 'g' : b === 'ml' ? 'ml' : 'unidad');
@@ -22,14 +24,15 @@ const UNIT_WORDS: Record<string, Unit> = {
 
 /**
  * Lee lo que se escribió en una casilla, como en el papel:
- * «3 paq + 385», «3p+385 grs», «2 paq», «542 grs», «1,085 kg», «1085», «2 und».
+ * «3 paq + 385», «3p+385 grs», «2 paq», «542 grs», «1,085 kg», «1085», «2 und»,
+ * y en lo que se pesa pero se cuenta por unidades: «5 paq + 2 und + 30 g».
  * Devuelve milésimas de la unidad base; null si está vacía; NaN si no se entiende.
  */
 export function parseSheetText(text: string, m: SheetMeasure): number | null {
   const t = text.trim().toLowerCase();
   if (!t || t === '-' || t === '—') return null;
   const parts = t.split('+').map((p) => p.trim()).filter(Boolean);
-  if (!parts.length || parts.length > 2) return NaN;
+  if (!parts.length || parts.length > 3) return NaN;
   let total = 0;
   for (let i = 0; i < parts.length; i++) {
     const mt = parts[i].match(/^(\d+(?:[.,]\d+)?)\s*([a-zñó]*)\.?$/);
@@ -42,6 +45,11 @@ export function parseSheetText(text: string, m: SheetMeasure): number | null {
       continue;
     }
     if (word && PACK_WORDS.test(word)) return NaN; // dice «paquete» pero este producto no viene en paquete
+    // «2 und» de algo que se pesa: cada unidad pesa unit_size_m.
+    if (m.base_unit !== 'unidad' && m.unit_size_m && UNIT_WORDS[word] === 'unidad') {
+      total += Math.round(n * m.unit_size_m);
+      continue;
+    }
     const unit = word ? UNIT_WORDS[word] : (m.pack_size_m > 0 ? small(m.base_unit) : m.unit);
     if (!unit) return NaN;
     const ok = m.base_unit === 'unidad' ? unit === 'unidad' : m.base_unit === 'ml' ? unit === 'ml' || unit === 'l' || unit === 'g' || unit === 'kg' : unit === 'g' || unit === 'kg' || unit === 'ml' || unit === 'l';

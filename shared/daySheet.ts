@@ -34,6 +34,8 @@ export interface DaySheetLine extends DayMoves {
   base_unit: BaseUnit;
   pack_size_m: number;
   pack_label: string;
+  /** Cuánto pesa una unidad (para contar «2 und» de algo que se pesa); 0 = no aplica. */
+  unit_size_m: number;
   sort_order: number;
   /** Lo contado al abrir (null = no se ha escrito). */
   open_m: number | null;
@@ -70,7 +72,7 @@ export function diffLevel(consumptionM: number | null, salesM: number, base: Bas
 }
 
 export function sheetLine(
-  item: Pick<DaySheetLine, 'item_id' | 'name' | 'location' | 'kind' | 'unit' | 'base_unit' | 'pack_size_m' | 'pack_label' | 'sort_order' | 'stock_m'>,
+  item: Pick<DaySheetLine, 'item_id' | 'name' | 'location' | 'kind' | 'unit' | 'base_unit' | 'pack_size_m' | 'pack_label' | 'unit_size_m' | 'sort_order' | 'stock_m'>,
   stored: { open_m: number | null; close_m: number | null } | undefined,
   moves: DayMoves,
   salesM: number,

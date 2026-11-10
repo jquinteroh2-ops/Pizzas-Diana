@@ -62,6 +62,7 @@ export interface Item {
   location: Location;
   pack_size_m: number;
   pack_label: string;
+  unit_size_m: number;
   sort_order: number;
   active: boolean;
   is_demo: boolean;

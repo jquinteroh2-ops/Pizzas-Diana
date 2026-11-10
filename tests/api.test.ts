@@ -141,15 +141,17 @@ test('22. permisos por rol: la cocina prepara y reporta; no vende ni ve estadís
   assert.equal(waste.status, 201);
   assert.equal((await cook('GET', `/api/counts/sheet?location=${encodeURIComponent('Nevera negra')}`)).body.lines.length, 1);
 
-  // La cocina no puede: vender, ver estadísticas, autorizar, administrar preparaciones ni la lista de compras.
+  // Desde la hoja, la cocina crea y corrige preparaciones y corrige lo que anotó hoy.
+  assert.equal((await cook('POST', '/api/preparations', { name: 'X' })).status, 400);
+  assert.equal((await cook('POST', `/api/productions/${made.body.id}/annul`, { reason: 'se anotó mal' })).status, 200);
+
+  // La cocina no puede: vender, ver estadísticas, autorizar ni la lista de compras.
   const cookForbidden: [string, string, unknown?][] = [
     ['POST', '/api/sales', { requestId: 'cocina-0001', items: [] }],
     ['GET', '/api/dashboard'],
     ['GET', '/api/reports/kitchen?period=semana'],
     ['POST', `/api/wastes/${waste.body.id}/review`, { decision: 'aprobar' }],
-    ['POST', '/api/preparations', { name: 'X' }],
     ['GET', '/api/shopping-list'],
-    ['POST', `/api/productions/${made.body.id}/annul`, { reason: 'quiero' }],
     ['POST', `/api/items/${cebolla.body.id}/adjust`, { mode: 'set', value: 100, reason: 'robo' }],
   ];
   for (const [m, p, b] of cookForbidden) assert.equal((await cook(m, p, b)).status, 403, `cocina: ${m} ${p} debería estar prohibido`);

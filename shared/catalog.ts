@@ -18,6 +18,8 @@ export interface CatalogItem {
   min: number;
   /** Cómo viene (hoja de papel o lista del proveedor): tamaño en g/ml/und y nombre. La cocina lo corrige si cambia. */
   pack?: [size: number, label: string];
+  /** Algo que se pesa pero se compra por unidades: cuánto pesa (g) una unidad. Con esto el paquete se escribe en unidades. */
+  unitSize?: number;
 }
 
 export const CATALOG_ITEMS: CatalogItem[] = [
@@ -64,7 +66,8 @@ export const CATALOG_ITEMS: CatalogItem[] = [
   // ---- Lo que no está en la hoja de papel pero usan las recetas (queda al final de cada lugar) ----
   { key: 'chorizo_santarrosano', name: 'Chorizo santarrosano', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 0.5 },
   { key: 'chorizo_espanol', name: 'Chorizo español', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 0.5 },
-  { key: 'butifarra', name: 'Butifarra', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 0.5, pack: [1000, 'paquete'] },
+  // Paquete de 6 butifarras; cada una pesa unos 32 g (la picadita mix para 2 lleva 64 g = 2 butifarras). La cocina lo corrige si cambia.
+  { key: 'butifarra', name: 'Butifarra', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 0.5, pack: [6, 'paquete'], unitSize: 32 },
   { key: 'chorizo_artesanal', name: 'Chorizo artesanal', category: 'Carnes y embutidos', location: 'Congelador', unit: 'kg', kind: 'insumo', min: 0.5 },
   { key: 'longaniza', name: 'Longaniza', category: 'Carnes y embutidos', location: 'Congelador', unit: 'unidad', kind: 'insumo', min: 0, pack: [20, 'paquete'] },
   { key: 'salchicha_americana', name: 'Salchicha super americana', category: 'Carnes y embutidos', location: 'Congelador', unit: 'unidad', kind: 'insumo', min: 0, pack: [8, 'paquete'] },

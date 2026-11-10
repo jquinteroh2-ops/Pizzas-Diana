@@ -164,7 +164,7 @@ function SectionRows({
               </div>
               {(l.pack_size_m > 0 || note) && (
                 <span className="block text-[10.5px] leading-tight text-ink-500">
-                  {l.pack_size_m > 0 && packDescription(l)}
+                  {(l.pack_size_m > 0 || l.unit_size_m > 0) && packDescription(l)}
                   {l.pack_size_m > 0 && note && ' · '}
                   {note}
                 </span>

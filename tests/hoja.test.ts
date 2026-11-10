@@ -223,3 +223,38 @@ test('la casilla de la hoja se lee como se escribe a mano: «3 paq + 385», «54
   assert.ok(Number.isNaN(parseSheetText('mucho', pack)));
   assert.ok(Number.isNaN(parseSheetText('2 kg', und))); // un producto por unidades no se escribe en kilos
 });
+
+test('paquetes y unidades: «5 paq + 2 und + 30 g» en algo que se pesa (butifarra: paquete de 6, cada una de 32 g)', async () => {
+  const { parseSheetText } = await import('../shared/sheetText.ts');
+  const { formatPacks } = await import('../shared/kitchen.ts');
+  const { guessItem } = await import('../shared/classify.ts');
+  const { db, admin } = await setup();
+  const buti = await sheet.addIngredient(db, admin, { name: 'Butifarra', location: 'Congelador', unit: 'g', unit_size: 32, pack_size: 6, pack_unit: 'unidad', pack_label: 'paquete' });
+  assert.equal(buti.unit_size_m, 32_000);
+  assert.equal(buti.pack_size_m, 192_000);
+  assert.equal(buti.category, 'Carnes y embutidos'); // el sistema la clasificó solo
+  const m = { unit: 'g' as const, base_unit: 'g' as const, pack_size_m: buti.pack_size_m, pack_label: 'paquete', unit_size_m: buti.unit_size_m };
+  assert.equal(parseSheetText('5 paq + 2 und + 30 g', m), 5 * 192_000 + 2 * 32_000 + 30_000);
+  assert.equal(parseSheetText('5 paq', m), 960_000);
+  assert.equal(parseSheetText('3 und', m), 96_000);
+  assert.equal(formatPacks(5 * 192_000 + 2 * 32_000 + 30_000, 192_000, 'paq', 'g', 32_000), '5 paq + 2 und + 30 g');
+  // Lo que llegó: 5 paquetes entran como 960 g.
+  await sheet.setCell(db, admin, { date: localDate(), item_id: buti.id, field: 'entry', value_m: parseSheetText('5 paq', m) });
+  assert.equal(await qty(db, buti.id), 960_000);
+  assert.equal(guessItem('Queso costeño')?.location, 'Nevera Coca-Cola');
+  assert.equal(guessItem('Salsa de ajo')?.location, 'Nevera negra');
+});
+
+test('bajas: quien la anotó la corrige o la borra mientras no esté autorizada', async () => {
+  const k = await setup();
+  const { db, jefa, admin } = k;
+  const w = await wastes.reportWaste(db, jefa, { item_id: k.queso.id, qty: 100, unit: 'g', reason: 'danado', note: 'moho' });
+  assert.equal(await qty(db, k.queso.id), 2_900_000);
+  await wastes.updateWaste(db, jefa, w.id, { qty: 250, unit: 'g' });
+  assert.equal(await qty(db, k.queso.id), 2_750_000);
+  await wastes.deleteWaste(db, jefa, w.id);
+  assert.equal(await qty(db, k.queso.id), 3_000_000);
+  const w2 = await wastes.reportWaste(db, jefa, { item_id: k.queso.id, qty: 50, unit: 'g', reason: 'danado', note: 'moho' });
+  await wastes.reviewWaste(db, admin, w2.id, { decision: 'aprobar' });
+  await assert.rejects(async () => wastes.updateWaste(db, jefa, w2.id, { qty: 10, unit: 'g' }), /ya fue revisada/);
+});

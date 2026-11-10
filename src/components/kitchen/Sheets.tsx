@@ -2,7 +2,7 @@
 // inventario diario (inicio | entrada | fin | consumo), merma, masa de pizza y bajas.
 // Se llenan en la misma tabla y se pueden imprimir con el mismo formato.
 import { useMemo, useState, type ReactNode } from 'react';
-import { ChevronLeft, ChevronRight, Printer, Pencil, Copy, Loader2, Camera } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Printer, Pencil, Copy, Loader2, Camera, Plus, Trash2, RotateCcw } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useApi, useApp } from '../../lib/app';
 import type { InventorySheet, InventorySheetLine, Item, PeriodReport, Preparation, Production, Waste } from '../../lib/types';
@@ -16,6 +16,7 @@ import { addDays, daysBetween, formatTime, localDate, shortDate, shortDateDow, w
 import type { Flow } from './FlowHost';
 import { compressPhoto, parseQty, smallUnit, validQty } from './helpers';
 import { parseSheetText } from '../sheet/qty';
+import { PreparationForm } from './PreparationForm';
 
 // ---------- Piezas con el estilo de la hoja de papel ----------
 
@@ -361,6 +362,22 @@ function sheetMilli(text: string, base: BaseUnit): number | null {
   return m === null || Number.isNaN(m) ? null : m;
 }
 
+/** Anula lo que se anotó hoy de una preparación para volverlo a escribir (devuelve los insumos). */
+async function undoToday(prods: Production[], prepId: number, today: string) {
+  const list = prods.filter((x) => x.preparation_id === prepId && x.status === 'activa' && x.local_date === today);
+  for (const x of list) await api.post(`/productions/${x.id}/annul`, { reason: 'Corrección en la hoja' });
+  return list;
+}
+
+/** Botón «Editar receta» del bloque de una preparación. */
+function EditPrepButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button className="ml-2 inline-flex items-center gap-1 rounded bg-white/20 px-2 py-0.5 text-[10px] font-bold tracking-normal normal-case hover:bg-white/35 print:hidden" onClick={onClick}>
+      <Pencil className="size-3" /> Editar receta
+    </button>
+  );
+}
+
 // ---------- 2. Merma ----------
 
 type MermaDraft = { ini: string; util: string; fin: string };
@@ -374,7 +391,27 @@ export function MermaSheet(_props: { onFlow?: (f: Flow) => void }) {
   const [draft, setDraft] = useState<Record<number, MermaDraft>>({});
   const [more, setMore] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState<number | null>(null);
+  const [form, setForm] = useState<{ prep?: Preparation } | null>(null);
   const canWrite = can('kitchen.use');
+  const canEdit = can('sheet.use');
+
+  const fix = async (p: Preparation) => {
+    setBusy(p.id);
+    try {
+      const undone = await undoToday(prods.data ?? [], p.id, today);
+      const base = p.inputs[0]?.base_unit ?? 'g';
+      const sum = (f: (x: Production) => number) => undone.reduce((a, x) => a + f(x), 0);
+      const txt = (m: number, b: BaseUnit) => (m ? String(fromMilli(m, smallUnit(b))).replace('.', ',') : '');
+      setDraft((x) => ({ ...x, [p.id]: { ini: txt(sum((y) => y.inputs[0]?.qty_m ?? 0), base), util: txt(sum((y) => y.merma_util_m), base), fin: txt(sum((y) => y.output_m), p.output_base) } }));
+      setMore((st) => new Set(st).add(p.id));
+      toast.success('Listo para corregir', 'Cambie los números de hoy y guarde otra vez.');
+      bump();
+    } catch (e) {
+      toast.fail(e);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const blocks = useMemo(() => {
     const list = (preps.data ?? []).filter((p) => p.active && p.mode === 'transformacion');
@@ -436,7 +473,18 @@ export function MermaSheet(_props: { onFlow?: (f: Flow) => void }) {
   };
 
   return (
-    <Paper title="Hoja de merma" subtitle={`Semana del ${shortDate(from)} al ${shortDate(addDays(from, 6))}`} nav={<WeekNav from={from} setDate={setDate} />}>
+    <Paper
+      title="Hoja de merma"
+      subtitle={`Semana del ${shortDate(from)} al ${shortDate(addDays(from, 6))}`}
+      nav={<WeekNav from={from} setDate={setDate} />}
+      actions={
+        canEdit && (
+          <button className="btn-secondary btn-sm" onClick={() => setForm({})}>
+            <Plus className="size-4" /> Nueva preparación
+          </button>
+        )
+      }
+    >
       {prods.error ? (
         <ErrorBox message={prods.error} onRetry={prods.reload} />
       ) : !prods.data || !preps.data ? (
@@ -469,6 +517,7 @@ export function MermaSheet(_props: { onFlow?: (f: Flow) => void }) {
                     <tr>
                       <td className={SECTION} colSpan={9}>
                         {p.inputs[0]?.item_name} → {p.name} · estándar {formatNumber(p.std_yield_pct ?? 0)} %
+                        {canEdit && <EditPrepButton onClick={() => setForm({ prep: p })} />}
                       </td>
                     </tr>
                     <tr>
@@ -512,9 +561,14 @@ export function MermaSheet(_props: { onFlow?: (f: Flow) => void }) {
                             <td key={day} className={cx(TD, 'text-center font-semibold text-[#1f3f8f] tabular-nums', low && 'text-brand-700')}>
                               {x ? r.show(x) : ''}
                               {r.key === 'rend' && day === today && x && canWrite && (
-                                <button className="block w-full text-[10px] font-bold text-ink-500 underline print:hidden" onClick={() => setMore((s) => new Set(s).add(p.id))}>
-                                  + anotar otra
-                                </button>
+                                <span className="block print:hidden">
+                                  <button className="block w-full text-[10px] font-bold text-ink-500 underline" onClick={() => setMore((s) => new Set(s).add(p.id))}>
+                                    + anotar otra
+                                  </button>
+                                  <button className="block w-full text-[10px] font-bold text-brand-700 underline disabled:opacity-40" disabled={busy === p.id} onClick={() => void fix(p)}>
+                                    corregir
+                                  </button>
+                                </span>
                               )}
                             </td>
                           );
@@ -526,13 +580,14 @@ export function MermaSheet(_props: { onFlow?: (f: Flow) => void }) {
               </Wide>
             );
           })}
-          {blocks.length === 0 && <p className="text-sm text-ink-500">No hay preparaciones con merma configuradas.</p>}
+          {blocks.length === 0 && <p className="text-sm text-ink-500">No hay preparaciones con merma. Agréguelas con «Nueva preparación».</p>}
           <p className="text-[11px] text-ink-500">
             Se llena la columna de hoy: peso inicial, merma útil (lo que se aprovecha) y peso final. La merma inútil = peso inicial − merma útil − peso final. Al guardar, el sistema
-            descuenta lo que entró y suma lo que salió.
+            descuenta lo que entró y suma lo que salió. Si algo quedó mal, «corregir» lo devuelve para escribirlo de nuevo.
           </p>
         </div>
       )}
+      {form && <PreparationForm prep={form.prep} defaultMode="transformacion" onClose={() => setForm(null)} />}
     </Paper>
   );
 }
@@ -549,7 +604,31 @@ export function MasaSheet(_props: { onFlow?: (f: Flow) => void }) {
   const [draft, setDraft] = useState<Record<number, Record<string, string>>>({});
   const [more, setMore] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState<number | null>(null);
+  const [form, setForm] = useState<{ prep?: Preparation } | null>(null);
   const canWrite = can('kitchen.use');
+  const canEdit = can('sheet.use');
+
+  const fix = async (p: Preparation) => {
+    setBusy(p.id);
+    try {
+      const undone = await undoToday(prods.data ?? [], p.id, today);
+      const d: Record<string, string> = {};
+      for (const i of p.inputs) {
+        const m = undone.reduce((a, x) => a + (x.inputs.find((y) => y.item_id === i.item_id)?.qty_m ?? 0), 0);
+        if (m) d[i.item_id] = String(fromMilli(m, smallUnit(i.base_unit))).replace('.', ',');
+      }
+      const out = undone.reduce((a, x) => a + x.output_m, 0);
+      if (out) d.out = String(fromMilli(out, smallUnit(p.output_base))).replace('.', ',');
+      setDraft((x) => ({ ...x, [p.id]: d }));
+      setMore((st) => new Set(st).add(p.id));
+      toast.success('Listo para corregir', 'Cambie los números de hoy y guarde otra vez.');
+      bump();
+    } catch (e) {
+      toast.fail(e);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const save = async (p: Preparation) => {
     const d = draft[p.id] ?? {};
@@ -583,13 +662,24 @@ export function MasaSheet(_props: { onFlow?: (f: Flow) => void }) {
   };
 
   return (
-    <Paper title="Masa de pizza" subtitle={`Semana del ${shortDate(from)} al ${shortDate(addDays(from, 6))}`} nav={<WeekNav from={from} setDate={setDate} />}>
+    <Paper
+      title="Masa y recetas por lote"
+      subtitle={`Semana del ${shortDate(from)} al ${shortDate(addDays(from, 6))}`}
+      nav={<WeekNav from={from} setDate={setDate} />}
+      actions={
+        canEdit && (
+          <button className="btn-secondary btn-sm" onClick={() => setForm({})}>
+            <Plus className="size-4" /> Nueva receta por lote
+          </button>
+        )
+      }
+    >
       {prods.error ? (
         <ErrorBox message={prods.error} onRetry={prods.reload} />
       ) : !prods.data || !preps.data ? (
         <Loading />
       ) : batches.length === 0 ? (
-        <p className="text-sm text-ink-500">No hay recetas por lote configuradas.</p>
+        <p className="text-sm text-ink-500">No hay recetas por lote. Agréguelas con «Nueva receta por lote».</p>
       ) : (
         <div className="space-y-6">
           {batches.map((p) => {
@@ -617,6 +707,7 @@ export function MasaSheet(_props: { onFlow?: (f: Flow) => void }) {
                     <tr>
                       <td className={SECTION} colSpan={3 + days.length}>
                         {p.name}
+                        {canEdit && <EditPrepButton onClick={() => setForm({ prep: p })} />}
                       </td>
                     </tr>
                     <tr>
@@ -706,9 +797,16 @@ export function MasaSheet(_props: { onFlow?: (f: Flow) => void }) {
                                   {busy === p.id ? <Loader2 className="mx-auto size-3 animate-spin" /> : 'Guardar'}
                                 </button>
                               ) : (
-                                <button className="text-[10px] font-bold text-ink-500 underline" onClick={() => setMore((s) => new Set(s).add(p.id))}>
-                                  + anotar otro lote
-                                </button>
+                                <span className="flex flex-col items-center">
+                                  <button className="text-[10px] font-bold text-ink-500 underline" onClick={() => setMore((s) => new Set(s).add(p.id))}>
+                                    + anotar otro lote
+                                  </button>
+                                  {out.has(today) && (
+                                    <button className="text-[10px] font-bold text-brand-700 underline disabled:opacity-40" disabled={busy === p.id} onClick={() => void fix(p)}>
+                                      corregir
+                                    </button>
+                                  )}
+                                </span>
                               ))}
                           </td>
                         ))}
@@ -722,6 +820,7 @@ export function MasaSheet(_props: { onFlow?: (f: Flow) => void }) {
           })}
         </div>
       )}
+      {form && <PreparationForm prep={form.prep} defaultMode="lote" onClose={() => setForm(null)} />}
     </Paper>
   );
 }
@@ -816,6 +915,62 @@ function NewWasteRow({ onSaved }: { onSaved: () => void }) {
 }
 
 
+/** Corregir la cantidad o el motivo de una baja que todavía no se autoriza. */
+function EditWaste({ w, onClose }: { w: Waste; onClose: () => void }) {
+  const { bump } = useApp();
+  const toast = useToast();
+  const base = baseOf(w.unit);
+  const [amount, setAmount] = useState(String(fromMilli(w.qty_m, smallUnit(base))).replace('.', ','));
+  const [reason, setReason] = useState(w.note || WASTE_REASON_LABELS[w.reason]);
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    const m = parseSheetText(amount, { unit: smallUnit(base), base_unit: base, pack_size_m: 0, pack_label: '' });
+    if (!m || Number.isNaN(m)) return toast.error('Cantidad', 'Escriba la cantidad: 100, 2 und, 1,5 kg.');
+    if (reason.trim().length < 3) return toast.error('Motivo', 'Escriba el motivo de la baja.');
+    setBusy(true);
+    try {
+      await api.put(`/wastes/${w.id}`, { qty: m / 1000, unit: smallUnit(base), reason: reasonFrom(reason), note: reason.trim() });
+      toast.success('Baja corregida', w.item_name);
+      bump();
+      onClose();
+    } catch (e) {
+      toast.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      open
+      size="sm"
+      onClose={onClose}
+      title="Corregir la baja"
+      subtitle={w.item_name}
+      footer={
+        <>
+          <button className="btn-secondary" onClick={onClose}>
+            Cancelar
+          </button>
+          <button className="btn-primary" disabled={busy} onClick={() => void save()}>
+            {busy ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />} Guardar
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <label className="block">
+          <span className="label">Cantidad ({UNIT_SHORT[smallUnit(base)]})</span>
+          <input className="input" value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" />
+        </label>
+        <label className="block">
+          <span className="label">Motivo</span>
+          <input className="input" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={300} />
+        </label>
+      </div>
+    </Modal>
+  );
+}
+
 export function BajasSheet(_props: { onFlow?: (f: Flow) => void }) {
   const { can, bump } = useApp();
   const toast = useToast();
@@ -825,6 +980,10 @@ export function BajasSheet(_props: { onFlow?: (f: Flow) => void }) {
   const [busy, setBusy] = useState<number | null>(null);
   const [reject, setReject] = useState<Waste | null>(null);
   const [photo, setPhoto] = useState<Waste | null>(null);
+  const [editing, setEditing] = useState<Waste | null>(null);
+  const [removing, setRemoving] = useState<Waste | null>(null);
+  const { user } = useApp();
+  const mine = (w: Waste) => w.status === 'pendiente' && (admin || w.reported_by === user.id);
   const from = weekStart(date);
   const to = weekEnd(date);
   const wastes = useApi<Waste[]>(`/wastes?from=${from}&to=${to}&limit=500`, [from, to]);
@@ -879,7 +1038,19 @@ export function BajasSheet(_props: { onFlow?: (f: Flow) => void }) {
                     {WASTE_REASON_LABELS[w.reason].toUpperCase()}
                     {w.note && <span className="block text-[11px] text-ink-500">{w.note}</span>}
                   </td>
-                  <td className={cx(TD, 'uppercase')}>{w.reported_by_name}</td>
+                  <td className={cx(TD, 'uppercase')}>
+                    {w.reported_by_name}
+                    {mine(w) && (
+                      <span className="mt-1 flex gap-2 normal-case print:hidden">
+                        <button className="inline-flex items-center gap-0.5 text-[10px] font-bold text-ink-500 underline" onClick={() => setEditing(w)}>
+                          <Pencil className="size-3" /> corregir
+                        </button>
+                        <button className="inline-flex items-center gap-0.5 text-[10px] font-bold text-brand-700 underline" onClick={() => setRemoving(w)}>
+                          <Trash2 className="size-3" /> borrar
+                        </button>
+                      </span>
+                    )}
+                  </td>
                   <td className={cx(TD, 'text-center text-[12px] font-bold')}>
                     {w.status === 'pendiente' && admin ? (
                       <span className="flex items-center justify-center gap-1 print:hidden">
@@ -919,6 +1090,44 @@ export function BajasSheet(_props: { onFlow?: (f: Flow) => void }) {
         </Wide>
       )}
       {reject && <RejectWaste w={reject} onClose={() => setReject(null)} />}
+      {editing && <EditWaste w={editing} onClose={() => setEditing(null)} />}
+      {removing && (
+        <Modal
+          open
+          size="sm"
+          onClose={() => setRemoving(null)}
+          title="Borrar la baja"
+          subtitle={`${removing.item_name} · ${formatQty(removing.qty_m, niceUnit(removing.qty_m, baseOf(removing.unit)))}`}
+          footer={
+            <>
+              <button className="btn-secondary" onClick={() => setRemoving(null)}>
+                Cancelar
+              </button>
+              <button
+                className="btn-danger"
+                disabled={busy === removing.id}
+                onClick={async () => {
+                  setBusy(removing.id);
+                  try {
+                    await api.post(`/wastes/${removing.id}/delete`);
+                    toast.success('Baja borrada', 'Lo que se había descontado volvió al inventario.');
+                    setRemoving(null);
+                    bump();
+                  } catch (e) {
+                    toast.fail(e);
+                  } finally {
+                    setBusy(null);
+                  }
+                }}
+              >
+                <Trash2 className="size-4" /> Borrar
+              </button>
+            </>
+          }
+        >
+          <p className="text-sm text-ink-700">Úselo si la baja se anotó por error. Lo que se había descontado vuelve al inventario.</p>
+        </Modal>
+      )}
       {photo && (
         <Modal open onClose={() => setPhoto(null)} title={`Foto · ${photo.item_name}`} subtitle={`${photo.reported_by_name} · ${WASTE_REASON_LABELS[photo.reason]}`}>
           <WastePhoto id={photo.id} className="max-h-[60dvh] w-full rounded-xl" />

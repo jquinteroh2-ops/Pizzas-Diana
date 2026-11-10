@@ -258,8 +258,10 @@ CREATE TABLE IF NOT EXISTS items (
   location    TEXT NOT NULL DEFAULT 'Otro',
   pack_size_m BIGINT NOT NULL DEFAULT 0 CHECK (pack_size_m >= 0), -- 0 = se cuenta suelto
   pack_label  TEXT NOT NULL DEFAULT '',
-  sort_order  INTEGER NOT NULL DEFAULT 0   -- orden en la hoja de conteo
+  sort_order  INTEGER NOT NULL DEFAULT 0,  -- orden en la hoja de conteo
+  unit_size_m BIGINT NOT NULL DEFAULT 0 CHECK (unit_size_m >= 0) -- cuánto pesa (g) o mide (ml) UNA unidad; 0 = no se cuenta por unidades
 );
+ALTER TABLE items ADD COLUMN IF NOT EXISTS unit_size_m BIGINT NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS products (
   id          SERIAL PRIMARY KEY,

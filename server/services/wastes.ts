@@ -161,3 +161,46 @@ export async function reviewWaste(db: DB, admin: User, id: number, body: Record<
     return await getWaste(db, id);
   });
 }
+
+/** Quien la anotó (o el administrador) puede corregir una baja mientras no esté autorizada. */
+function canTouch(user: User, w: WasteView) {
+  if (w.status !== 'pendiente') throw conflict('Esta baja ya fue revisada: ya no se puede cambiar.');
+  if (w.reported_by !== user.id && !can(user, 'kitchen.manage')) throw conflict('Solo quien anotó la baja o el administrador la puede cambiar.');
+}
+
+/** Devuelve al inventario lo que la baja había descontado. */
+async function giveBack(db: DB, user: User, w: WasteView, why: string, at: string) {
+  const t = (await db.prepare('SELECT taken_m FROM wastes WHERE id = ?').get(w.id)) as { taken_m: number | null };
+  if (t.taken_m) await applyMovement(db, { itemId: w.item_id, delta: t.taken_m, type: 'baja', reason: `Baja #${w.id} ${why}: se devuelve al inventario`, userId: user.id, at, isDemo: !!w.is_demo });
+}
+
+/** Corregir la cantidad o el motivo de una baja pendiente: se devuelve lo descontado y se descuenta lo nuevo. */
+export async function updateWaste(db: DB, user: User, id: number, body: Record<string, unknown>): Promise<WasteView> {
+  const w = await getWaste(db, id);
+  canTouch(user, w);
+  const unit = body.unit === undefined ? w.unit : body.unit;
+  if (!isUnit(unit) || !compatible(unit, w.unit)) throw bad(`La unidad no es compatible con "${w.item_name}".`);
+  const qtyM = body.qty === undefined ? w.qty_m : toMilli(num(body.qty, 'cantidad', { allowZero: false, max: 1e7 }), unit);
+  const reason = body.reason === undefined ? w.reason : oneOf(body.reason, 'motivo', WASTE_REASONS);
+  const note = body.note === undefined ? w.note : optStr(body.note, 'detalle', 300);
+  if (reason === 'otro' && note.length < 3) throw bad('Explica el motivo de la baja en el detalle.');
+  const at = nowIso();
+  return await tx(db, async () => {
+    await giveBack(db, user, w, 'corregida', at);
+    await db.prepare('UPDATE wastes SET qty_m=?, unit=?, reason=?, note=?, taken_m=0 WHERE id=?').run(qtyM, unit, reason, note, id);
+    await take(db, user, id, at, !!w.is_demo);
+    return await getWaste(db, id);
+  });
+}
+
+/** Borrar una baja pendiente (se anotó por error): lo descontado vuelve al inventario. */
+export async function deleteWaste(db: DB, user: User, id: number): Promise<{ ok: true }> {
+  const w = await getWaste(db, id);
+  canTouch(user, w);
+  const at = nowIso();
+  await tx(db, async () => {
+    await giveBack(db, user, w, 'borrada', at);
+    await db.prepare('DELETE FROM wastes WHERE id = ?').run(id);
+  });
+  return { ok: true };
+}

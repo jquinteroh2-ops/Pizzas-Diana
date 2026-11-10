@@ -199,8 +199,8 @@ export function createApp(db: DB, opts: { secureCookies?: boolean; staticDir?: s
 
   // Preparaciones (recetas de la cocina) y lo que se prepara cada día.
   app.get('/api/preparations', need('kitchen.use'), h(async () => await preps.listPreparations(db)));
-  app.post('/api/preparations', need('kitchen.manage'), h(async (req) => await preps.createPreparation(db, req.body ?? {})));
-  app.put('/api/preparations/:id', need('kitchen.manage'), h(async (req) => await preps.updatePreparation(db, id(req), req.body ?? {})));
+  app.post('/api/preparations', need('sheet.use'), h(async (req) => await preps.createPreparation(db, req.body ?? {})));
+  app.put('/api/preparations/:id', need('sheet.use'), h(async (req) => await preps.updatePreparation(db, id(req), req.body ?? {})));
   app.post('/api/preparations/:id/active', need('kitchen.manage'), h(async (req) => await preps.setPreparationActive(db, id(req), req.body?.active === true)));
   app.get('/api/productions', need('kitchen.use'), h(async (req) =>
     await preps.listProductions(db, {
@@ -215,7 +215,7 @@ export function createApp(db: DB, opts: { secureCookies?: boolean; staticDir?: s
   app.post('/api/productions', need('kitchen.use'), h(async (req, res) => {
     res.status(201).json(await preps.registerProduction(db, req.user!, req.body ?? {}));
   }));
-  app.post('/api/productions/:id/annul', need('kitchen.manage'), h(async (req) => await preps.annulProduction(db, req.user!, id(req), req.body ?? {})));
+  app.post('/api/productions/:id/annul', need('sheet.use'), h(async (req) => await preps.annulProduction(db, req.user!, id(req), req.body ?? {})));
 
   // Bajas: las reporta cualquiera, las autoriza el administrador.
   app.get('/api/wastes', need('kitchen.report'), h(async (req) =>
@@ -225,6 +225,8 @@ export function createApp(db: DB, opts: { secureCookies?: boolean; staticDir?: s
   app.post('/api/wastes', need('kitchen.report'), h(async (req, res) => {
     res.status(201).json(await wastes.reportWaste(db, req.user!, req.body ?? {}));
   }));
+  app.put('/api/wastes/:id', need('kitchen.report'), h(async (req) => await wastes.updateWaste(db, req.user!, id(req), req.body ?? {})));
+  app.post('/api/wastes/:id/delete', need('kitchen.report'), h(async (req) => await wastes.deleteWaste(db, req.user!, id(req))));
   app.post('/api/wastes/:id/review', need('kitchen.manage'), h(async (req) => await wastes.reviewWaste(db, req.user!, id(req), req.body ?? {})));
 
   // Faltantes y lista de compras.
@@ -232,7 +234,7 @@ export function createApp(db: DB, opts: { secureCookies?: boolean; staticDir?: s
   app.post('/api/shortages', need('kitchen.report'), h(async (req, res) => {
     res.status(201).json(await shortages.reportShortage(db, req.user!, req.body ?? {}));
   }));
-  app.post('/api/shortages/:id/status', need('kitchen.manage'), h(async (req) => await shortages.setShortageStatus(db, req.user!, id(req), req.body ?? {})));
+  app.post('/api/shortages/:id/status', need('sheet.use'), h(async (req) => await shortages.setShortageStatus(db, req.user!, id(req), req.body ?? {})));
   app.get('/api/shopping-list', need('kitchen.manage'), h(async () => await shortages.shoppingList(db)));
 
   // Conteos por ubicación.

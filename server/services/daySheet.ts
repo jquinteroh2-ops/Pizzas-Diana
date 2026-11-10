@@ -20,6 +20,7 @@ import {
 } from '../../shared/daySheet.ts';
 import { applyMovement, changeItemBase, createItem, getItem, setItemActive, updateItem, CATEGORIES, type Item } from './inventory.ts';
 import type { User } from './users.ts';
+import { guessItem } from '../../shared/classify.ts';
 
 const MAX_M = 1e12;
 
@@ -122,7 +123,7 @@ export async function getDaySheet(db: DB, _user: User, date: unknown, opts: { to
   const items = (
     await db
       .prepare(
-        `SELECT id item_id, name, location, kind, unit, base_unit, pack_size_m, pack_label, sort_order, qty_m stock_m FROM items
+        `SELECT id item_id, name, location, kind, unit, base_unit, pack_size_m, pack_label, unit_size_m, sort_order, qty_m stock_m FROM items
          WHERE active = 1 OR id IN (SELECT item_id FROM day_sheet_lines WHERE local_date = ?)`,
       )
       .all(d) as unknown as {
@@ -134,6 +135,7 @@ export async function getDaySheet(db: DB, _user: User, date: unknown, opts: { to
       base_unit: BaseUnit;
       pack_size_m: number;
       pack_label: string;
+      unit_size_m: number;
       sort_order: number;
       stock_m: number;
     }[]
@@ -329,6 +331,9 @@ export async function sheetDays(db: DB, from: string, to: string) {
 
 function categoryFor(body: Record<string, unknown>, kind: ItemKind): string {
   if (typeof body.category === 'string' && (CATEGORIES as readonly string[]).includes(body.category)) return body.category;
+  // El sistema lo clasifica solo por el nombre (queso → Lácteos, salsa → Salsas…).
+  const g = kind === 'insumo' && typeof body.name === 'string' ? guessItem(body.name) : null;
+  if (g) return g.category;
   return kind === 'preparacion' ? 'Productos preparados' : 'Ingredientes';
 }
 
@@ -349,6 +354,7 @@ export async function addIngredient(db: DB, user: User, body: Record<string, unk
     pack_size: body.pack_size,
     pack_unit: body.pack_unit,
     pack_label: body.pack_label,
+    unit_size: body.unit_size,
   });
 }
 
@@ -372,6 +378,7 @@ export async function editIngredient(db: DB, id: number, body: Record<string, un
       pack_size: body.pack_size,
       pack_unit: body.pack_unit,
       pack_label: body.pack_label,
+      unit_size: body.unit_size,
       category: body.category !== undefined && (CATEGORIES as readonly string[]).includes(body.category as string) ? body.category : undefined,
     });
     if (body.active === false && item.active) return await setItemActive(db, id, false);

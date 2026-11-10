@@ -95,10 +95,13 @@ export function packsToMilli(packs: number, loose: number, packSizeM: number, lo
 }
 
 /** "3 paquetes + 385 g" a partir de una existencia y el tamaño del paquete. */
-export function formatPacks(milli: number, packSizeM: number, packLabel: string, unit: Unit): string | null {
-  if (packSizeM <= 0) return null;
-  const packs = Math.floor(milli / packSizeM);
-  const rest = milli - packs * packSizeM;
+export function formatPacks(milli: number, packSizeM: number, packLabel: string, unit: Unit, unitSizeM = 0): string | null {
+  if (packSizeM <= 0 && unitSizeM <= 0) return null;
+  const packs = packSizeM > 0 ? Math.floor(milli / packSizeM) : 0;
+  let rest = milli - packs * packSizeM;
+  // Lo que se pesa pero se cuenta por unidades: «5 paq + 2 und + 30 g».
+  const units = unitSizeM > 0 ? Math.floor(rest / unitSizeM) : 0;
+  rest -= units * unitSizeM;
   const label = packLabel || 'paquete';
   // Las abreviaturas («paq», «und») no llevan plural.
   const plural = packs === 1 || label.length <= 4 ? label : /[aeo]$/.test(label) ? label + 's' : label + 'es';
@@ -106,6 +109,7 @@ export function formatPacks(milli: number, packSizeM: number, packLabel: string,
   const looseUnit: Unit = unit === 'kg' ? 'g' : unit === 'l' ? 'ml' : unit;
   const parts: string[] = [];
   if (packs > 0) parts.push(`${packs} ${plural}`);
-  if (rest > 0 || packs === 0) parts.push(`${formatNumber(fromMilli(rest, looseUnit))} ${UNIT_SHORT[looseUnit]}`);
+  if (units > 0) parts.push(`${units} und`);
+  if (rest > 0 || (packs === 0 && units === 0)) parts.push(`${formatNumber(fromMilli(rest, looseUnit))} ${UNIT_SHORT[looseUnit]}`);
   return parts.join(' + ');
 }
